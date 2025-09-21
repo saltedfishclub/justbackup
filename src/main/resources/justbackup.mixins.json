@@ -1,9 +1,10 @@
 {
 	"required": true,
-	"package": "com.example.mixin",
+	"package": "io.ib67.sfcraft.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
-		"ExampleMixin"
+		"LevelStorageAccessor",
+		"MixinMinecraftServer"
 	],
 	"injectors": {
 		"defaultRequire": 1

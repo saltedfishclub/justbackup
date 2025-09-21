@@ -1,6 +1,8 @@
 plugins {
 	id 'fabric-loom' version "${loom_version}"
 	id 'maven-publish'
+	id("io.freefair.lombok") version "9.0.0-rc2"
+
 }
 
 version = project.mod_version
@@ -38,7 +40,8 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-	
+	implementation("io.minio:minio:8.5.17")
+
 }
 
 processResources {
