@@ -26,24 +26,12 @@ public record WorldDir(
         return root.resolve("entities");
     }
 
-    public Path playerdata() {
-        return root.resolve("playerdata");
-    }
-
     @SneakyThrows
-    public Map<String, WorldDir> otherDimensions() {
-        var begin = root.resolve("dimensions").toAbsolutePath();
-        try (var w = Files.walk(begin, 3)) {
-            var _r = w.filter(Files::isDirectory)
-                    .filter(it -> Files.exists(it.resolve("region")) && Files.exists(it.resolve("poi")))
-                    .collect(Collectors.groupingBy(it -> it.relativize(root).toString(),
-                            Collectors.mapping(WorldDir::new, Collectors.toList())));
-            var r = new HashMap<String, WorldDir>();
-            _r.forEach((k, v) -> {
-                assert v.size() <= 1;
-                r.put(k, v.getFirst());
-            });
-            return r;
+    public List<WorldDir> otherDimensions() {
+        try (var w = Files.walk(root)) {
+            return w.filter(it -> Files.exists(it.resolve("region")) && Files.exists(it.resolve("poi")))
+                    .map(WorldDir::new)
+                    .toList();
         }
     }
 
@@ -52,9 +40,10 @@ public record WorldDir(
      */
     @SneakyThrows
     public List<Path> otherFiles() {
-        var exclude = List.of(playerdata(), entities(), region(), poi(), root.resolve("dimensions"));
+        var otherDimensions = otherDimensions();
         try (var f = Files.walk(root)) {
-            return f.filter(it -> exclude.stream().noneMatch(it::startsWith)).toList();
+            return f.filter(it -> otherDimensions.stream().noneMatch(a -> it.startsWith(a.root)))
+                    .toList();
         }
     }
 

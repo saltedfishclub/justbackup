@@ -7,6 +7,7 @@ import io.ib67.sfcraft.config.StorageOption;
 import io.ib67.sfcraft.config.serializer.StorageOptionSerializer;
 import io.ib67.sfcraft.mixin.LevelStorageAccessor;
 import io.ib67.sfcraft.mixin.MixinMinecraftServer;
+import io.ib67.sfcraft.strategy.BackupStrategy;
 import lombok.SneakyThrows;
 import net.fabricmc.api.ModInitializer;
 
@@ -32,7 +33,7 @@ public class JustBackupMod implements ModInitializer {
     public static final String MOD_ID = "justbackup";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     public static final AtomicBoolean PERFORMING_BACKUP = new AtomicBoolean(false);
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting()
+    public static final Gson GSON = new GsonBuilder().setPrettyPrinting()
             .registerTypeAdapter(StorageOption.class, new StorageOptionSerializer(
                     Map.of("s3", StorageOption.S3.class,
                             "local", StorageOption.Local.class)
@@ -40,6 +41,7 @@ public class JustBackupMod implements ModInitializer {
             .create();
     protected ScheduledExecutorService scheduledBackupExecutor;
     protected JustBackupConfig config;
+    protected BackupStrategy strategy;
     protected volatile MinecraftServer server;
 
     @Override
@@ -54,71 +56,25 @@ public class JustBackupMod implements ModInitializer {
             saveConfig(configPath);
         }
         config = GSON.fromJson(Files.readString(configPath), JustBackupConfig.class);
+        this.strategy = createStrategy();
         LOGGER.info("Configuration has been loaded. Using storage option: {}", config.option().type());
         scheduledBackupExecutor = Executors.newSingleThreadScheduledExecutor();
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             LOGGER.info("Launching background threads...");
             this.server = server;
-            scheduledBackupExecutor.scheduleAtFixedRate(this::performBackup,
+            scheduledBackupExecutor.scheduleAtFixedRate(new BackupWorker(server, strategy),
                     config.backupIntervalMinutes(), config.backupIntervalMinutes(), TimeUnit.MINUTES);
         });
     }
 
-    @SneakyThrows
-    private void performBackup() {
-        if (server == null) {
-            LOGGER.warn("MinecraftServer is not initialized yet, not doing backup");
-            return;
-        }
-        int i = 0;
-        while (!PERFORMING_BACKUP.compareAndSet(false, true)) {
-            if (i++ % 10 == 0) LOGGER.info("Server is saving world while performing backup! waiting...");
-            Thread.sleep(2000);
-        }
-        // performing backup is now true
-        try {
-            if (i == 0) {
-                // not saved yet.
-                server.saveAll(true, true, false);
+    private BackupStrategy createStrategy() {
+        switch (config.option()) {
+            case StorageOption.Local local -> {
+
             }
-            var session = ((LevelStorageAccessor) server).getSession();
-            var path = session.getDirectory().getRootPath();
-            // !compress
-            if (!config.compress()) {
-                performBackupUncompressed(new WorldDir(Path.of(path)));
-            }
-        } finally {
-            PERFORMING_BACKUP.set(false);
         }
     }
 
-    @SneakyThrows
-    private void performBackupUncompressed(WorldDir worldDir) {
-        var everything = worldDir.everything();
-        var opt = (StorageOption.Local) config.option();
-        var dst = Path.of(opt.saveDir()).resolve("Backup_" + DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(LocalDateTime.now()));
-        Files.createDirectories(dst);
-        try(var f = Files.walk(worldDir.region())){
-            bundleUncompressed(dst.resolve("regions.gz"), f.toList());
-        }
-        try(var f = Files.walk(worldDir.poi())) {
-            bundleUncompressed(dst.resolve("poi.gz"), f.toList());
-        }
-        var other = dst.resolve("other.zip", )
-    }
-
-    @SneakyThrows
-    private static void bundleUncompressed(Path dst, Collection<Path> toBundle){
-        try(var fileOut = new RandomAccessFile(dst.toFile(), "rw");){
-            var fileOutDst = fileOut.getChannel();
-            for (Path path : toBundle) {
-                var file = path.toFile();
-                try(var in = new FileInputStream(path.toFile())){
-                    in.getChannel().transferTo(0, file.length(), fileOutDst);
-                }
-            }
-        }
-    }
 
     @SneakyThrows
     private void saveConfig(Path configPath) {

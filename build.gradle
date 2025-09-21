@@ -41,6 +41,7 @@ dependencies {
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 	implementation("io.minio:minio:8.5.17")
+    implementation 'com.github.luben:zstd-jni:1.5.7-4'
 
 }
 
