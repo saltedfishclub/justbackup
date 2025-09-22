@@ -80,4 +80,9 @@ public class LocalBackupStrategy implements BackupStrategy {
         }
         return true;
     }
+
+    @Override
+    public void close() {
+
+    }
 }

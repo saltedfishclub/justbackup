@@ -18,4 +18,6 @@ public interface BackupStrategy {
     void deleteBackup(Backup backup);
 
     boolean isAvailable();
+
+    void close();
 }

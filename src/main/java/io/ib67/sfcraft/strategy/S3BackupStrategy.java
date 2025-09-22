@@ -1,48 +1,46 @@
 package io.ib67.sfcraft.strategy;
 
 import io.ib67.sfcraft.Backup;
-import io.ib67.sfcraft.WorldDir;
 import io.ib67.sfcraft.bundler.Bundle;
 import io.ib67.sfcraft.config.StorageOption;
-import io.minio.BucketExistsArgs;
-import io.minio.MinioClient;
-import io.minio.RemoveObjectArgs;
-import io.minio.UploadObjectArgs;
-import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.log4j.Log4j2;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
 import java.net.URI;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.TimeUnit;
+import java.nio.file.StandardOpenOption;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Log4j2
 public class S3BackupStrategy implements BackupStrategy {
-    protected final StorageOption.S3 option;
-    protected final MinioClient minio;
     protected final AtomicBoolean uploading = new AtomicBoolean(false);
+    protected final StorageOption.S3 option;
+    protected final S3Client s3;
+    protected final Path temporaryDownloadPath;
 
     @SneakyThrows
-    public S3BackupStrategy(StorageOption.S3 option) {
+    public S3BackupStrategy(StorageOption.S3 option, Path tempDownloadPath) {
         this.option = option;
-        this.minio = MinioClient.builder()
-                .endpoint(URI.create(option.endpoint()).toURL())
-                .credentials(option.accessKey(), option.secretKey())
-                .region(option.region())
+        var credential = AwsBasicCredentials.create(option.accessKey(), option.secretKey());
+        this.s3 = S3Client.builder()
+                .region(Region.of(option.region()))
+                .forcePathStyle(option.enforcePathStyle())
+                .endpointOverride(URI.create(option.endpoint()))
+                .credentialsProvider(StaticCredentialsProvider.create(credential))
                 .build();
-        if (option.enforcePathStyle()) {
-            minio.disableVirtualStyleEndpoint();
-        } else {
-            minio.enableVirtualStyleEndpoint();
-        }
         log.info("Testing S3 credentials");
-        var exists = minio.bucketExists(BucketExistsArgs.builder().bucket(option.bucket()).build());
-        if (!exists) throw new IllegalStateException("Bucket '" + option.bucket() + "' does not exist");
+        // throws exception if the bucket neither inaccessible nor not exist
+        s3.headBucket(b -> b.bucket(option.bucket()));
+        this.temporaryDownloadPath = Objects.requireNonNull(tempDownloadPath);
+        if (Files.notExists(temporaryDownloadPath))
+            Files.createDirectories(temporaryDownloadPath);
     }
 
     @Override
@@ -55,11 +53,10 @@ public class S3BackupStrategy implements BackupStrategy {
         do {
             try {
                 var object = option.prefix() + "/" + pathToBundle.getFileName().toString();
-                minio.uploadObject(UploadObjectArgs.builder()
+                s3.putObject(o -> o.bucket(option.bucket())
                         .contentType("application/octet-stream")
-                        .object(object)
-                        .filename(pathToBundle.toString())
-                        .build());
+                        .ifNoneMatch("*") // to avoid content overriding
+                        .key(object).build(), pathToBundle);
                 //todo also calculate sha?
                 return new Backup(pathToBundle.getFileName().toString(),
                         object, "s3",
@@ -82,15 +79,22 @@ public class S3BackupStrategy implements BackupStrategy {
     }
 
     @Override
+    @SneakyThrows
     public void recoverBackup(Backup backup, Path restorePath) {
-        //todo http range
+        var resp = s3.getObject(b -> b.bucket(option.bucket()).key(backup.backupKey()));
+        var target = temporaryDownloadPath.resolve("s3_" + System.currentTimeMillis());
+        try (var fs = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+            resp.transferTo(fs);
+            Bundle.unbundleFile(target, restorePath);
+        } finally {
+            Files.deleteIfExists(target);
+        }
     }
 
     @Override
     @SneakyThrows
     public void deleteBackup(Backup backup) {
-        minio.removeObject(RemoveObjectArgs.builder()
-                        .bucket(backup.backupKey()).build());
+        s3.deleteObject(b -> b.bucket(option.bucket()).key(backup.backupKey()).build());
     }
 
     @Override
@@ -100,5 +104,10 @@ public class S3BackupStrategy implements BackupStrategy {
             return false;
         }
         return true;
+    }
+
+    @Override
+    public void close() {
+        s3.close();
     }
 }

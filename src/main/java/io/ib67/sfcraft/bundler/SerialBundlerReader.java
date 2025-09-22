@@ -18,6 +18,7 @@ public class SerialBundlerReader implements Closeable {
 
     protected final EntryInputStream metadataIn;
     protected final byte[] buffer = new byte[4096];
+    protected final RandomAccessFile raf;
     protected boolean entryRead;
     protected int entries;
 
@@ -28,7 +29,7 @@ public class SerialBundlerReader implements Closeable {
 //    }
 
     public SerialBundlerReader(Path path) throws IOException {
-        var raf = new RandomAccessFile(path.toFile(), "r");
+        raf = new RandomAccessFile(path.toFile(), "r");
         var totalLen = Files.size(path);
         var magic = raf.readInt();
         var compressed = magic == Bundle.COMPRESSED_MAGIC;
@@ -96,5 +97,6 @@ public class SerialBundlerReader implements Closeable {
     public void close() throws IOException {
         in.close();
         metadataIn.close();
+        raf.close();
     }
 }

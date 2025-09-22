@@ -145,12 +145,19 @@ public class JustBackupMod implements ModInitializer {
                 .then(literal("create").executes(commandHandler::cmdIssueBackup))
                 .then(literal("suspend").executes(commandHandler::cmdSuspend))
         );
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            scheduledBackupExecutor.shutdown();
+            if (commandHandler.restoreIssued != null) {
+                commandHandler.restoreIssued.run();
+            }
+            tracker.close();
+        });
     }
 
     private BackupStrategy createStrategy() {
         return switch (config.option()) {
             case StorageOption.Local local -> new LocalBackupStrategy(local);
-            case StorageOption.S3 s3 -> new S3BackupStrategy(s3);
+            case StorageOption.S3 s3 -> new S3BackupStrategy(s3, Path.of(config.temporaryBackupDir()));
         };
     }
 

@@ -41,4 +41,9 @@ public class BackupTracker implements BackupStrategy {
     public boolean isAvailable() {
         return underlying.isAvailable();
     }
+
+    @Override
+    public void close() {
+        underlying.close();
+    }
 }

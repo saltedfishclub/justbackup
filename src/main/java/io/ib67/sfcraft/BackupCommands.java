@@ -7,8 +7,10 @@ import net.minecraft.text.ClickEvent;
 import net.minecraft.text.Text;
 
 import java.awt.*;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 
 public class BackupCommands {
     protected final JustBackupMod mod;
@@ -81,12 +83,24 @@ public class BackupCommands {
         s.sendMessage(Text.literal("Please restart your server to take changes"));
         restoreIssued = () -> {
             System.out.println("Recovering backup... ");
-            try{
+            try {
                 var toOverride = Path.of(backup.from());
-                var old = Path.of(backup.from()+"_old");
+                var old = Path.of(backup.from() + "_old");
+                if(Files.exists(old)){
+                    try (var f = Files.walk(old)) {
+                        f.sorted(Comparator.reverseOrder())
+                                .forEach(it -> {
+                                    try {
+                                        Files.deleteIfExists(it);
+                                    } catch (IOException e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                });
+                    }
+                }
                 Files.deleteIfExists(old);
                 Files.move(toOverride, old);
-                System.out.println("Moved your old save to "+old);
+                System.out.println("Moved your old save to " + old);
                 mod.tracker.recoverBackup(backup, toOverride);
                 System.out.println("Recover successfully!");
             } catch (Exception e) {
