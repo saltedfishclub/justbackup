@@ -24,7 +24,7 @@ public class EntryInputStream extends FilterInputStream {
         var gunzipped = len < 0;
         len = Math.abs(len);
         var name = new String(readNBytes(len)).intern();
-        var buf = ByteBuffer.wrap(readNBytes(8));
+        var buf = ByteBuffer.wrap(readNBytes(8 + 8));
         var fileLen = buf.getLong();
         var fileOffset = buf.getLong();
         return new BundlerEntry(name, gunzipped, fileLen, fileOffset);

@@ -13,6 +13,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.zip.GZIPInputStream;
@@ -28,12 +29,14 @@ public class SerialBundlerWriter implements Closeable {
     public SerialBundlerWriter(OutputStream out) {
         Objects.requireNonNull(out);
         this.out = out;
+        this.entries = new ArrayList<>();
         channel = null;
     }
 
     public SerialBundlerWriter(FileChannel channel, long offset) {
         Objects.requireNonNull(channel);
         this.offset = offset;
+        this.entries = new ArrayList<>();
         this.channel = channel;
         out = null;
     }
@@ -50,10 +53,12 @@ public class SerialBundlerWriter implements Closeable {
     public void writePlain(Path path, String fileName) throws IOException {
         if (channel != null) {
             writeZC(path, fileName);
-            return;
-        }
-        try (var in = Files.newInputStream(path)) {
-            in.transferTo(out);
+        } else {
+            var current = offset;
+            try (var in = Files.newInputStream(path)) {
+                in.transferTo(out);
+            }
+            entries.add(new BundlerEntry(fileName, false, Files.size(path), current));
         }
     }
 

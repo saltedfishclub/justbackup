@@ -6,5 +6,4 @@ public record BundlerEntry(
         long fileLength,
         long offset
 ) {
-    public static final int MAGIC = 0xBACEBACE;
 }

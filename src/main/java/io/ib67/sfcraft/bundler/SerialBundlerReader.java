@@ -19,31 +19,37 @@ public class SerialBundlerReader implements Closeable {
     protected final EntryInputStream metadataIn;
     protected final byte[] buffer = new byte[4096];
     protected boolean entryRead;
+    protected int entries;
 
-    public SerialBundlerReader(InputStream in, InputStream metadataIn) {
-        this.in = Objects.requireNonNull(in);
-        this.metadataIn = new EntryInputStream(Objects.requireNonNull(metadataIn));
-        inChannel = null;
-    }
+//    public SerialBundlerReader(InputStream in, InputStream metadataIn) {
+//        this.in = Objects.requireNonNull(in);
+//        this.metadataIn = new EntryInputStream(Objects.requireNonNull(metadataIn));
+//        inChannel = null;
+//    }
 
     public SerialBundlerReader(Path path) throws IOException {
         var raf = new RandomAccessFile(path.toFile(), "r");
         var totalLen = Files.size(path);
+        var magic = raf.readInt();
+        var compressed = magic == Bundle.COMPRESSED_MAGIC;
+        if (!compressed && magic != Bundle.MAGIC) throw new IOException("Invalid bundle file");
+
+        // read length
         raf.seek(totalLen - 4);
         var metadataLength = raf.readInt();
-        var metadataBegin = totalLen - 4 - metadataLength;
+        raf.seek(totalLen - 8);
+        entries = raf.readInt();
+        // read metadata
+        var metadataBegin = totalLen - 8 - metadataLength;
         var metadataBytes = new byte[metadataLength];
         raf.seek(metadataBegin);
         raf.readFully(metadataBytes);
 
         this.metadataIn = new EntryInputStream(new ZstdInputStreamNoFinalizer(new ByteArrayInputStream(metadataBytes)));
-        if (ByteBuffer.wrap(metadataIn.readNBytes(4)).getInt() != BundlerEntry.MAGIC) {
-            throw new IllegalArgumentException("Invalid Bundler entry");
-        }
         // check compressed
-        raf.seek(0);
+        raf.seek(4);
         var fis = Channels.newInputStream(raf.getChannel());
-        if (raf.readInt() == Zstd.magicNumber()) {
+        if (compressed) {
             in = new ZstdInputStreamNoFinalizer(fis);
             inChannel = null;
         } else {
@@ -54,12 +60,14 @@ public class SerialBundlerReader implements Closeable {
 
     @SneakyThrows
     public boolean hasEntry() {
-        return metadataIn.available() > 0;
+        return entries > 0;
     }
 
     public BundlerEntry readEntry() throws IOException {
+        if (!hasEntry()) throw new IOException("All entries are read");
         var entry = metadataIn.readEntry();
         entryRead = true;
+        entries--;
         return entry;
     }
 

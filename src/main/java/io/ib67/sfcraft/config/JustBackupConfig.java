@@ -7,8 +7,9 @@ import java.util.List;
 public record JustBackupConfig(
         long backupIntervalMinutes,
         int keepBackups,
-        boolean allowParallel,
+        boolean allowGunzip,
         boolean compress,
+        String temporaryBackupDir,
         StorageOption option
 ) {
     public JustBackupConfig {

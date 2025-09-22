@@ -20,10 +20,6 @@ public class EntryOutputStream extends FilterOutputStream {
         super(out);
     }
 
-    public void writeMagic() throws IOException {
-        out.write(BundlerEntry.MAGIC);
-    }
-
     public void write(BundlerEntry entry) throws IOException {
         var fileName = entry.fileName().getBytes(StandardCharsets.UTF_8);
         var buf = ByteBuffer.allocate(4).putInt(entry.unGzipped() ? fileName.length * -1 : fileName.length);

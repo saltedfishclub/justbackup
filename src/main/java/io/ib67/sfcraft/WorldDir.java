@@ -42,7 +42,9 @@ public record WorldDir(
     public List<Path> otherFiles() {
         var otherDimensions = otherDimensions();
         try (var f = Files.walk(root)) {
-            return f.filter(it -> otherDimensions.stream().noneMatch(a -> it.startsWith(a.root)))
+            return f.filter(it -> Files.isRegularFile(it)
+                            && otherDimensions.stream().noneMatch(a -> it.startsWith(a.root)))
+                    .filter(it -> !it.getFileName().toString().contains("session.lock"))
                     .toList();
         }
     }
@@ -50,7 +52,9 @@ public record WorldDir(
     @SneakyThrows
     public List<Path> everything() {
         try (var f = Files.walk(root)) {
-            return f.toList();
+            return f.filter(Files::isRegularFile)
+                    .filter(it -> !it.getFileName().toString().contains("session.lock"))
+                    .toList();
         }
     }
 }
