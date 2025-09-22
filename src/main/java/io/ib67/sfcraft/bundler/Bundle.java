@@ -2,7 +2,6 @@ package io.ib67.sfcraft.bundler;
 
 import com.github.luben.zstd.ZstdOutputStreamNoFinalizer;
 import io.ib67.sfcraft.WorldDir;
-import io.netty.buffer.Unpooled;
 import lombok.Data;
 import lombok.SneakyThrows;
 import lombok.experimental.Accessors;
@@ -16,7 +15,6 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.Arrays;
 import java.util.List;
 
 @Accessors(fluent = true)

@@ -1,7 +1,14 @@
 package io.ib67.sfcraft;
 
 import com.mojang.brigadier.Command;
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.minecraft.command.CommandRegistryAccess;
+import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.text.ClickEvent;
 import net.minecraft.text.Text;
@@ -11,6 +18,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.concurrent.CompletableFuture;
+
+import static net.minecraft.server.command.CommandManager.argument;
+import static net.minecraft.server.command.CommandManager.literal;
 
 public class BackupCommands {
     protected final JustBackupMod mod;
@@ -86,7 +97,7 @@ public class BackupCommands {
             try {
                 var toOverride = Path.of(backup.from());
                 var old = Path.of(backup.from() + "_old");
-                if(Files.exists(old)){
+                if (Files.exists(old)) {
                     try (var f = Files.walk(old)) {
                         f.sorted(Comparator.reverseOrder())
                                 .forEach(it -> {
@@ -111,10 +122,41 @@ public class BackupCommands {
     }
 
     public int cmdHelp(CommandContext<ServerCommandSource> serverCommandSourceCommandContext) {
+        // todo i18n
         return 0;
     }
 
     public int cmdCancelRestore(CommandContext<ServerCommandSource> serverCommandSourceCommandContext) {
+        restoreIssued = null;
+        serverCommandSourceCommandContext.getSource().sendMessage(Text.of("Operation cancelled."));
         return 0;
+    }
+
+    public void registerCommand(
+            CommandDispatcher<ServerCommandSource> dispatcher,
+            CommandRegistryAccess registry, CommandManager.RegistrationEnvironment env) {
+        dispatcher.register(literal("backup")
+                .requires(it -> it.hasPermissionLevel(3))
+                .then(literal("help").executes(this::cmdHelp))
+                .then(literal("list").executes(this::cmdList))
+                .then(literal("cancelrestore").executes(this::cmdCancelRestore))
+                .then(literal("delete")
+                        .then(argument("backupName", StringArgumentType.greedyString())
+                                .suggests(this::suggestBackups)
+                                .executes(this::cmdDelete)))
+                .then(literal("restore")
+                        .then(argument("backupName", StringArgumentType.greedyString())
+                                .suggests(this::suggestBackups)
+                                .executes(this::cmdRestore)))
+                .then(literal("create").executes(this::cmdIssueBackup))
+                .then(literal("suspend").executes(this::cmdSuspend))
+        );
+    }
+
+    private CompletableFuture<Suggestions> suggestBackups(CommandContext<ServerCommandSource> serverCommandSourceCommandContext, SuggestionsBuilder suggestionsBuilder) {
+        for (Backup value : mod.tracker.getTrackedBackups().values()) {
+            suggestionsBuilder = suggestionsBuilder.suggest(value.backupKey());
+        }
+        return CompletableFuture.completedFuture(suggestionsBuilder.build());
     }
 }

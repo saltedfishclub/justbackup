@@ -57,7 +57,6 @@ public class S3BackupStrategy implements BackupStrategy {
                         .contentType("application/octet-stream")
                         .ifNoneMatch("*") // to avoid content overriding
                         .key(object).build(), pathToBundle);
-                //todo also calculate sha?
                 return new Backup(pathToBundle.getFileName().toString(),
                         object, "s3",
                         from.toString(),

@@ -1,13 +1,11 @@
 package io.ib67.sfcraft.bundler;
 
-import com.github.luben.zstd.ZstdOutputStreamNoFinalizer;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;

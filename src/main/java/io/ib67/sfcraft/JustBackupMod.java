@@ -5,6 +5,9 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import io.ib67.sfcraft.config.JustBackupConfig;
 import io.ib67.sfcraft.config.StorageOption;
 import io.ib67.sfcraft.config.serializer.StorageOptionSerializer;
@@ -104,7 +107,15 @@ public class JustBackupMod implements ModInitializer {
                 throw new RuntimeException(e);
             }
         });
-        CommandRegistrationCallback.EVENT.register(this::registerCommand);
+        var command = new BackupCommands(this);
+        CommandRegistrationCallback.EVENT.register(command::registerCommand);
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            scheduledBackupExecutor.shutdown();
+            if (command.restoreIssued != null) {
+                command.restoreIssued.run();
+            }
+            tracker.close();
+        });
     }
 
     public CompletableFuture<Backup> issueBackup() {
@@ -127,40 +138,12 @@ public class JustBackupMod implements ModInitializer {
         }
     }
 
-    private void registerCommand(
-            CommandDispatcher<ServerCommandSource> dispatcher,
-            CommandRegistryAccess registry, CommandManager.RegistrationEnvironment env) {
-        var commandHandler = new BackupCommands(this);
-        dispatcher.register(literal("backup")
-                .requires(it -> it.hasPermissionLevel(3))
-                .then(literal("help").executes(commandHandler::cmdHelp))
-                .then(literal("list").executes(commandHandler::cmdList))
-                .then(literal("cancelrestore").executes(commandHandler::cmdCancelRestore))
-                .then(literal("delete")
-                        .then(argument("backupName", StringArgumentType.greedyString())
-                                .executes(commandHandler::cmdDelete)))
-                .then(literal("restore")
-                        .then(argument("backupName", StringArgumentType.greedyString())
-                                .executes(commandHandler::cmdRestore)))
-                .then(literal("create").executes(commandHandler::cmdIssueBackup))
-                .then(literal("suspend").executes(commandHandler::cmdSuspend))
-        );
-        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
-            scheduledBackupExecutor.shutdown();
-            if (commandHandler.restoreIssued != null) {
-                commandHandler.restoreIssued.run();
-            }
-            tracker.close();
-        });
-    }
-
     private BackupStrategy createStrategy() {
         return switch (config.option()) {
             case StorageOption.Local local -> new LocalBackupStrategy(local);
             case StorageOption.S3 s3 -> new S3BackupStrategy(s3, Path.of(config.temporaryBackupDir()));
         };
     }
-
 
     @SneakyThrows
     private void saveConfig(Path configPath) {
