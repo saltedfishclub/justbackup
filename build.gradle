@@ -5,23 +5,29 @@ plugins {
     id("com.gradleup.shadow") version '9.1.0'
 }
 
-version = project.mod_version
-group = project.maven_group
+allprojects {
+    apply plugin: "io.freefair.lombok"
+    apply plugin: 'java'
+    version = project.mod_version
+    group = project.maven_group
 
-base {
-    archivesName = project.archives_base_name
-}
-
-repositories {
-    // Add repositories to retrieve artifacts from in here.
-    // You should only use this when depending on other mods because
-    // Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
-    // See https://docs.gradle.org/current/userguide/declaring_repositories.html
-    // for more information about repositories.
-    maven {
-        name = "Kalculos"
-        url = "https://repo.sfclub.cc/snapshots"
+    base {
+        archivesName = project.archives_base_name
     }
+
+    repositories {
+        // Add repositories to retrieve artifacts from in here.
+        // You should only use this when depending on other mods because
+        // Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
+        // See https://docs.gradle.org/current/userguide/declaring_repositories.html
+        // for more information about repositories.
+        maven {
+            name = "Kalculos"
+            url = "https://repo.sfclub.cc/snapshots"
+        }
+        mavenCentral()
+    }
+
 }
 
 loom {
@@ -32,6 +38,19 @@ loom {
             sourceSet sourceSets.main
             sourceSet sourceSets.client
         }
+    }
+
+    java {
+        // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
+        // if it is present.
+        // If you remove this line, sources will not be generated.
+        withSourcesJar()
+
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+    tasks.withType(JavaCompile).configureEach {
+        it.options.release = 21
     }
 
 }
@@ -45,8 +64,8 @@ dependencies {
     // Fabric API. This is technically optional, but you probably want it anyway.
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
     // https://mvnrepository.com/artifact/software.amazon.awssdk/s3
+    api project(":bundler")
     shadow 'software.amazon.awssdk:s3:2.34.0'
-    shadow("io.ib67.kiwi:lang:1.2.1-SNAPSHOT")
     shadow 'com.github.luben:zstd-jni:1.5.7-4'
 }
 
@@ -64,26 +83,8 @@ processResources {
         expand "version": inputs.properties.version
     }
 }
-
-tasks.withType(JavaCompile).configureEach {
-    it.options.release = 21
-}
-
-java {
-    // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
-    // if it is present.
-    // If you remove this line, sources will not be generated.
-    withSourcesJar()
-
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-}
-
 jar {
     inputs.property "archivesName", project.base.archivesName
-    manifest {
-        attributes(Map.of("Main-Class", "io.ib67.sfcraft.bundler.Main"))
-    }
     from("LICENSE") {
         rename { "${it}_${inputs.properties.archivesName}" }
     }

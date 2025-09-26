@@ -1,5 +1,6 @@
 package io.ib67.sfcraft;
 
+import com.github.luben.zstd.Zstd;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
@@ -45,6 +46,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
@@ -57,7 +60,7 @@ public class JustBackupMod implements ModInitializer {
      * 1. A minecraft auto-save is in-progress.
      * 2. The backup is in-progress
      */
-    public static final AtomicBoolean PERFORMING_BACKUP = new AtomicBoolean(false);
+    public static final AtomicReference<IOState> BACKUP_LOCK = new AtomicReference<>(IOState.IDLE);
     public static final Gson GSON = new GsonBuilder().setPrettyPrinting()
             .registerTypeAdapter(StorageOption.class, new StorageOptionSerializer(
                     Map.of("s3", StorageOption.S3.class,
@@ -75,8 +78,9 @@ public class JustBackupMod implements ModInitializer {
     @SneakyThrows
     public void onInitialize() {
         LOGGER.info("Loading backup configuration");
-        backupIndexPath = Path.of("config").resolve("just_backup_index.json");
-        var configPath = Path.of("config").resolve("just_backup.json");
+        Path config1 = Path.of("config");
+        backupIndexPath = config1.resolve("just_backup_index.json");
+        var configPath = config1.resolve("just_backup.json");
         if (Files.notExists(configPath.getParent()))
             Files.createDirectories(configPath.getParent());
         if (Files.notExists(configPath))
@@ -131,7 +135,7 @@ public class JustBackupMod implements ModInitializer {
     private void onBackupComplete(@UnknownNullability Backup backup, @UnknownNullability Throwable throwable) {
         if (throwable != null) {
             server.getPlayerManager().broadcast(Text.literal("Backup failed. For administrators, please check your server console."), false);
-            throwable.printStackTrace();
+            LOGGER.error(throwable.getMessage(), throwable);
         } else {
             Files.writeString(backupIndexPath, GSON.toJson(tracker.getTrackedBackups()));
             server.getPlayerManager().broadcast(Text.literal("Backup success. " + backup), false);
@@ -151,7 +155,7 @@ public class JustBackupMod implements ModInitializer {
         var cfg = new JustBackupConfig(
                 60,
                 5,
-                true,
+                Zstd.defaultCompressionLevel(),
                 true,
                 "./.backup_cache",
                 new StorageOption.Local("backups", 0)

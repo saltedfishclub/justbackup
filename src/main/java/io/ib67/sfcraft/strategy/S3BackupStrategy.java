@@ -1,7 +1,7 @@
 package io.ib67.sfcraft.strategy;
 
 import io.ib67.sfcraft.Backup;
-import io.ib67.sfcraft.bundler.Bundle;
+import io.ib67.sfcraft.bundler.BundleReader;
 import io.ib67.sfcraft.config.StorageOption;
 import lombok.SneakyThrows;
 import lombok.extern.log4j.Log4j2;
@@ -84,7 +84,7 @@ public class S3BackupStrategy implements BackupStrategy {
         var target = temporaryDownloadPath.resolve("s3_" + System.currentTimeMillis());
         try (var fs = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             resp.transferTo(fs);
-            Bundle.unbundleFile(target, restorePath);
+            BundleReader.extract(target, restorePath);
         } finally {
             Files.deleteIfExists(target);
         }

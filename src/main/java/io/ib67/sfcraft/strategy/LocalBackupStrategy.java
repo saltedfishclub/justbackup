@@ -1,26 +1,15 @@
 package io.ib67.sfcraft.strategy;
 
-import com.github.luben.zstd.Zstd;
-import com.github.luben.zstd.ZstdOutputStreamNoFinalizer;
 import io.ib67.sfcraft.Backup;
-import io.ib67.sfcraft.WorldDir;
-import io.ib67.sfcraft.bundler.*;
+import io.ib67.sfcraft.bundler.BundleReader;
 import io.ib67.sfcraft.config.StorageOption;
-import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.lang3.Validate;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.*;
 
 @Log4j2
 public class LocalBackupStrategy implements BackupStrategy {
@@ -51,7 +40,7 @@ public class LocalBackupStrategy implements BackupStrategy {
         // check if it is compressed
         var backupFile = backupParentRoot.resolve(backup.backupKey());
         if (Files.notExists(backupFile)) throw new IllegalArgumentException("Backup " + backupFile + " does not exist");
-        Bundle.unbundleFile(backupFile, restorePath);
+        BundleReader.extract(backupFile, restorePath);
     }
 
     @SneakyThrows

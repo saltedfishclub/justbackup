@@ -1,15 +1,16 @@
 {
-	"required": true,
-	"package": "io.ib67.sfcraft.mixin",
-	"compatibilityLevel": "JAVA_21",
-	"mixins": [
-		"LevelStorageAccessor",
-		"MixinMinecraftServer"
-	],
-	"injectors": {
-		"defaultRequire": 1
-	},
-	"overwrites": {
-		"requireAnnotations": true
+  "required": true,
+  "package": "io.ib67.sfcraft.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "LevelStorageAccessor",
+    "MixinMinecraftServer",
+    "MixinRegionBasedStorage"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
 	}
 }
