@@ -17,12 +17,12 @@ public class Main {
     @SneakyThrows
     public static void main(String[] args) {
         var opts = ArgOpts.builder()
-                .args(args).description("Tools for .jpack format bundle").programName("jpack").build();
+                .args(args).description("Tools for .jbp.zst format bundle").programName("jpack").build();
         var in = opts.string("in", "Input. Can be directory or jpack bundle", null);
         var out = opts.string("out", "Output. Can be jpack bundle or directory", null);
         var help = opts.bool("help", false);
-        var allowGunzip = opts.bool("gunzip",
-                "Should we recompress NBT files for maximum compression rate (depends on compress)", true);
+        var allowGunzip = opts.bool("reasm",
+                "Should we reassemble NBT files for maximum compression rate", true);
         var parallel = opts.bool("parallel", "Use parallelized bundler. This conflicts with compress options", false);
         var parallelThreshold = opts.integer("threshold", "The threshold of parallel bundling", 512);
         var parallelCompression = opts.integer("parallel-compression", "The worker threads used for parallel compression. Do not confuse this with --parallel, which focus on bundling.\n" +
@@ -48,16 +48,16 @@ public class Main {
             System.out.println("The output is already exists. Please move it to other places");
             return;
         }
-        if (in.endsWith(".jpack")) {
-            BundleReader.extract(inPath, outPath);
-        } else if (out.endsWith(".jpack")) {
-            if (!Files.isDirectory(inPath))
-                throw new IllegalArgumentException("Your input should be a world directory.");
+        if (in.endsWith(".jbp.zst")) {
+            BundleReader.builder().build().extract(inPath, outPath);
+        } else if (out.endsWith(".jbp.zst")) {
             UnaryOperator<BundleWriter.BundleWriterBuilder> cfg = it -> it
                     .allowGunzip(allowGunzip)
-                    .relativeRoot(outPath.toAbsolutePath().getParent())
+                    .relativeRoot(inPath)
                     .dictionary(dict)
                     .compressionLevel(compressionLevel);
+            if (!Files.isDirectory(inPath))
+                throw new IllegalArgumentException("Your input should be a world directory.");
             List<Path> paths;
             try (var _paths = Files.walk(inPath)) {
                 paths = _paths.toList();

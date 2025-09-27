@@ -9,8 +9,6 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 
 public class EntryInputStream extends FilterInputStream {
-    private final ByteBuffer buffer;
-
     /**
      * Creates a {@code FilterInputStream}
      * by assigning the  argument {@code in}
@@ -22,19 +20,18 @@ public class EntryInputStream extends FilterInputStream {
      */
     protected EntryInputStream(InputStream in) {
         super(in);
-        this.buffer = ByteBuffer.allocate(4 + 8 + 4);
     }
 
     public BundleEntry readEntry() throws IOException {
-        buffer.clear();
-        in.read(buffer.array(), 0, 4+8+4);
-        var magic = buffer.getShort();
-        if (magic != BundleEntry.MAGIC) throw new IOException("Invalid magic number");
-        var attribute = buffer.getShort();
-        var fileLen = buffer.getLong();
-        var lenName = buffer.getInt();
+        var magic = (short) (in.read() << 8 | in.read()); // u16
+        if (magic != BundleEntry.MAGIC) throw new IOException("Invalid magic number: "+Long.toHexString(magic));
+        var time = (long) in.read() << 56 | (long) in.read() << 48 | (long) in.read() << 40 | (long) in.read() << 32 |
+                (long) in.read() << 24 | in.read() << 16 | in.read() << 8 | in.read();
+        var attribute = VarInts.readVarInt(in);
+        var segmentLen = VarInts.readVarLong(in);
+        var lenName = VarInts.readVarInt(in);
         var name = new String(in.readNBytes(lenName)).intern();
-        return new BundleEntry(attribute, fileLen, name);
+        return new BundleEntry((short) attribute, time, segmentLen, name);
     }
 
     @Override

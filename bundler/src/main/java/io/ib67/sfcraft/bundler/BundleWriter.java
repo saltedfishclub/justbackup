@@ -3,8 +3,12 @@ package io.ib67.sfcraft.bundler;
 import com.github.luben.zstd.ZstdDictCompress;
 import com.github.luben.zstd.ZstdOutputStreamNoFinalizer;
 import io.ib67.kiwi.routine.Uni;
+import io.ib67.sfcraft.bundler.region.RegionFile;
+import io.ib67.sfcraft.bundler.region.RegionFileReassembler;
 import io.netty.buffer.AdaptiveByteBufAllocator;
 import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.ByteBufOutputStream;
+
 import lombok.Builder;
 import lombok.SneakyThrows;
 
@@ -14,12 +18,11 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.UnaryOperator;
-import java.util.zip.GZIPInputStream;
 
 public class BundleWriter implements Closeable {
     public static Comparator<Path> SORT = BundleWriter::preferRegion;
-    protected static final ByteBufAllocator ALLOC = new AdaptiveByteBufAllocator();
-    protected final boolean allowGunzip;
+    protected final ByteBufAllocator allocator;
+    protected final boolean allowReassemble;
     protected final int compressionLevel;
     protected final Path relativeRoot;
     protected final EntryOutputStream outputStream;
@@ -33,16 +36,17 @@ public class BundleWriter implements Closeable {
             int maxWorkers,
             Path relativeRoot,
             OutputStream outputStream,
-            byte[] dictionary
+            byte[] dictionary, ByteBufAllocator allocator
     ) {
-        this.allowGunzip = allowGunzip;
+        this.allowReassemble = allowGunzip;
         this.compressionLevel = compressionLevel;
-        this.relativeRoot = relativeRoot;;
+        this.relativeRoot = relativeRoot;
+        this.allocator = allocator == null ? ByteBufAllocator.DEFAULT : allocator;
         var zstdOut = new ZstdOutputStreamNoFinalizer(outputStream, compressionLevel);
         if (dictionary != null) {
             zstdOut.setDict(new ZstdDictCompress(dictionary, compressionLevel));
         }
-        if(maxWorkers > 1) zstdOut.setWorkers(maxWorkers);
+        if (maxWorkers > 1) zstdOut.setWorkers(maxWorkers);
         this.outputStream = new EntryOutputStream(zstdOut);
         this.buffer = new byte[4096];
     }
@@ -71,7 +75,7 @@ public class BundleWriter implements Closeable {
             var futures = new ArrayList<CompletableFuture<Path>>();
             for (int i = 0; i < parted.size(); i++) {
                 var pathList = parted.get(i);
-                var output = parentOfBundle.resolve("Worker_" + System.currentTimeMillis() + "_" + i + ".jpack");
+                var output = parentOfBundle.resolve("Worker_" + System.currentTimeMillis() + "_" + i + ".jbp.zst");
                 var future = CompletableFuture.supplyAsync(() -> createBundleWorker(pathList, output, config), executor);
                 futures.add(future);
             }
@@ -138,38 +142,45 @@ public class BundleWriter implements Closeable {
     }
 
     public void write(Path path, boolean suggestGunzip) throws IOException {
-        var size = Files.size(path);
         if (suggestGunzip) {
-            boolean isGzip;
-            try (var raf = new RandomAccessFile(path.toFile(), "r")) {
-                isGzip = raf.read() == 0x8b && raf.read() == 0x1f;
-            }
-            if (isGzip) {
-                var buffer = ALLOC.buffer((int) size * 2);
-                try (var gunzip = new GZIPInputStream(new FileInputStream(path.toFile()))) {
-                    while (buffer.writeBytes(gunzip, 4096) != -1) ;
-                    outputStream.writeEntryHeader( // bug
-                            relativeRoot.relativize(path).toString(),
-                            BundleEntry.ATTR_GUNZIP,
-                            size
-                    );
-                    buffer.readBytes(outputStream, buffer.readableBytes());
-                } catch (IOException e) {
-                    writePlain(path);
-                } finally {
-                    buffer.release();
-                }
-            }
+            //todo size limit
+            writeReassembleInMem(path);
+            return;
         }
-
         writePlain(path);
+    }
+
+    @SneakyThrows
+    private void writeReassembleInMem(Path path) {
+        if (!"region".equals(path.getParent().toString()) && !path.toString().endsWith(".mca")) {
+            System.out.println("Mismatch "+path+", parent: "+path.getParent());
+            writePlain(path);
+            return;
+        }
+        System.out.println("Reassembling "+path);
+        var uncompressed = allocator.buffer();
+        var rPath = relativeRoot.toAbsolutePath().relativize(path.toAbsolutePath());
+        try (var out = new EntryOutputStream(new ByteBufOutputStream(uncompressed));
+             var rf = new RegionFileReassembler(path)) {
+            var result = rf.writeReassembled(allocator, RegionFile.CompressType.NONE);
+            var length = result.readableBytes();
+            out.writeEntryHeader(rPath.toString(), BundleEntry.ATTR_REASSEMBLE, length, System.currentTimeMillis());
+            result.readBytes(out, length);
+            result.release();
+            uncompressed.readBytes(outputStream, uncompressed.readableBytes());
+        } catch (IOException e) {
+            System.err.println("Failed to parse region " + path + ": " + e);
+            writePlain(path);
+        } finally {
+            uncompressed.release();
+        }
     }
 
     private void writePlain(Path path) throws IOException {
         var rPath = relativeRoot.toAbsolutePath().relativize(path.toAbsolutePath());
         var buffer = this.buffer;
         var outputStream = this.outputStream;
-        outputStream.writeEntryHeader(rPath.toString(), (short) 0, Files.size(path));
+        outputStream.writeEntryHeader(rPath.toString(), (short) 0, Files.size(path), 0);
         var read = 0;
         try (var fs = Files.newInputStream(path)) {
             while ((read = fs.read(buffer)) > 0) {

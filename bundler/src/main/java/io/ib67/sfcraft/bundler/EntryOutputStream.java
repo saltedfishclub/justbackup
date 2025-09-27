@@ -1,5 +1,6 @@
 package io.ib67.sfcraft.bundler;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
 
@@ -10,7 +11,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 public class EntryOutputStream extends FilterOutputStream {
-    protected final ByteBuffer buffer;
     /**
      * Creates an output stream filter built on top of the specified
      * underlying output stream.
@@ -22,17 +22,26 @@ public class EntryOutputStream extends FilterOutputStream {
      */
     public EntryOutputStream(OutputStream out) {
         super(out);
-        this.buffer = ByteBuffer.allocate(4+8+4);
     }
 
-    public void writeEntryHeader(String path, short attribute, long fileLen) throws IOException {
+    public void writeEntryHeader(String path, short attribute, long segmentLen, long time) throws IOException {
         var name = path.getBytes(StandardCharsets.UTF_8);
-        buffer.clear();
-        buffer.putShort(BundleEntry.MAGIC);
-        buffer.putShort(attribute);
-        buffer.putLong(fileLen);
-        buffer.putInt(name.length);
-        out.write(buffer.array());
+        out.write(BundleEntry.MAGIC >> 8);
+        out.write(BundleEntry.MAGIC & 0xFF); // u16 be
+        var timeArr = new byte[] { // u64 be
+                (byte) (time >> 56),
+                (byte) (time >> 48),
+                (byte) (time >> 40),
+                (byte) (time >> 32),
+                (byte) (time >> 24),
+                (byte) (time >> 16),
+                (byte) (time >> 8),
+                (byte) time
+        };
+        out.write(timeArr);
+        VarInts.writeVarInt(out, attribute);
+        VarInts.writeVarLong(out, segmentLen);
+        VarInts.writeVarInt(out, name.length);
         out.write(name);
     }
 

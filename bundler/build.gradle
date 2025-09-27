@@ -11,8 +11,20 @@ dependencies {
     compileOnly 'io.netty:netty-all:4.2.6.Final'
     api "io.ib67.kiwi:lang:1.2.3-SNAPSHOT"
     api 'io.netty:netty-all:4.2.6.Final'
+    api 'it.unimi.dsi:fastutil:8.5.15'
+    api 'org.lz4:lz4-java:1.8.0'
+    compileOnly 'org.lz4:lz4-java:1.8.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+shadowJar {
+    minimize()
+}
+
+test {
+    useJUnitPlatform()
+}
 
 jar {
     manifest {

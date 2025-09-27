@@ -40,7 +40,7 @@ public record BackupWorker(
         var backupName = "Backup_" + DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(LocalDateTime.now());
         var backupParentRoot = Path.of(config.temporaryBackupDir());
         if (Files.notExists(backupParentRoot)) Files.createDirectories(backupParentRoot);
-        var backupFile = backupParentRoot.resolve(backupName + ".jpack");
+        var backupFile = backupParentRoot.resolve(backupName + ".jbp.zst");
         try {
             if (i == 0) {
                 // not saved yet.
