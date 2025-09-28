@@ -80,7 +80,7 @@ public class BundleWriter implements Closeable {
                 futures.add(future);
             }
             return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).thenApply((v) ->
-                    Uni.from(futures::forEach).map(CompletableFuture::join).toList());
+                    futures.stream().map(CompletableFuture::join).toList());
         } else {
             return CompletableFuture.supplyAsync(() -> {
                 var singleResult = parentOfBundle.resolve("result.zst");

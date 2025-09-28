@@ -20,8 +20,8 @@ public class BackupTracker implements BackupStrategy {
     }
 
     @Override
-    public Backup createBackup(Path from, Path pathToBundle) {
-        var result = underlying.createBackup(from, pathToBundle);
+    public Backup createBackup(String subject, Path from, Path pathToBundle) {
+        var result = underlying.createBackup(subject, from, pathToBundle);
         trackedBackups.put(result.backupKey(), result);
         return result;
     }

@@ -7,7 +7,6 @@ import io.ib67.sfcraft.config.StorageOption;
 import io.ib67.sfcraft.strategy.BackupStrategy;
 import io.ib67.sfcraft.strategy.BackupTracker;
 import io.ib67.sfcraft.strategy.LocalBackupStrategy;
-import io.ib67.sfcraft.strategy.S3BackupStrategy;
 import io.netty.buffer.ByteBufAllocator;
 import lombok.SneakyThrows;
 import net.fabricmc.api.ModInitializer;
@@ -180,7 +179,7 @@ public class JustBackupMod implements ModInitializer {
     private BackupStrategy createStrategy() {
         return switch (config.option()) {
             case StorageOption.Local local -> new LocalBackupStrategy(local);
-            case StorageOption.S3 s3 -> new S3BackupStrategy(s3, Path.of(config.temporaryBackupDir()));
+            case StorageOption.S3 s3 -> throw new IllegalStateException();
         };
     }
 

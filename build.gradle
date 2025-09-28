@@ -64,15 +64,14 @@ dependencies {
     // Fabric API. This is technically optional, but you probably want it anyway.
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
     // https://mvnrepository.com/artifact/software.amazon.awssdk/s3
-    api project(":bundler")
-    shadow 'software.amazon.awssdk:s3:2.34.0'
-    shadow 'com.github.luben:zstd-jni:1.5.7-4'
+    shadow project(":bundler")
 }
 
 configurations.implementation.extendsFrom(configurations.shadow)
 shadowJar {
     configurations = [project.configurations.shadow]
     exclude("META-INF")
+    minimize()
     //relocate 'com.google', 'sfcraft.relocation.google'
 }
 
