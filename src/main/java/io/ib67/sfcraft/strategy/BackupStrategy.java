@@ -9,7 +9,7 @@ public interface BackupStrategy {
      * create a backup
      * @return a key to this backup
      */
-    Backup createBackup(Path source, Path bundle);
+    Backup createBackup(String subject, Path source, Path bundle);
 
     void recoverBackup(Backup backup, Path restorePath);
 

@@ -25,12 +25,16 @@ public class LocalBackupStrategy implements BackupStrategy {
 
     @Override
     @SneakyThrows
-    public Backup createBackup(Path from, Path pathToBundle) {
+    public Backup createBackup(String subject, Path from, Path pathToBundle) {
         var result = new Backup(
                 pathToBundle.getFileName().toString(),
                 pathToBundle.getFileName().toString(),
                 "local", from.toString(), false, Files.size(pathToBundle));
-        Files.move(pathToBundle, backupParentRoot.resolve(pathToBundle.getFileName()));
+        var parent = backupParentRoot.resolve(subject);
+        if(Files.notExists(parent)) {
+            Files.createDirectories(parent);
+        }
+        Files.move(pathToBundle, parent.resolve(pathToBundle.getFileName()));
         return result;
     }
 
@@ -40,7 +44,7 @@ public class LocalBackupStrategy implements BackupStrategy {
         // check if it is compressed
         var backupFile = backupParentRoot.resolve(backup.backupKey());
         if (Files.notExists(backupFile)) throw new IllegalArgumentException("Backup " + backupFile + " does not exist");
-        BundleReader.extract(backupFile, restorePath);
+        BundleReader.builder().build().extract(backupFile, restorePath);
     }
 
     @SneakyThrows

@@ -1,18 +1,13 @@
 package io.ib67.sfcraft.mixin;
 
+import io.ib67.sfcraft.Globals;
 import io.ib67.sfcraft.IOState;
-import io.ib67.sfcraft.JustBackupMod;
-import lombok.Getter;
 import net.minecraft.server.MinecraftServer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
-import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
-import javax.security.auth.callback.Callback;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 @Mixin(MinecraftServer.class)
 public abstract class MixinMinecraftServer {
@@ -28,7 +23,7 @@ public abstract class MixinMinecraftServer {
         // is already backing up
         this.ticksUntilAutosave = getAutosaveInterval();
         IOState witness;
-        while ((witness = JustBackupMod.BACKUP_LOCK.compareAndExchange(IOState.IDLE, IOState.SAVING_WORLD)) == IOState.STORAGE_SYNC) {
+        while ((witness = Globals.BACKUP_LOCK.compareAndExchange(IOState.IDLE, IOState.SAVING_WORLD)) == IOState.STORAGE_SYNC) {
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
@@ -41,6 +36,6 @@ public abstract class MixinMinecraftServer {
 
     @Inject(method = "runAutosave", at = @At("RETURN"))
     private void backup$disableProtect(CallbackInfo ci) {
-        JustBackupMod.BACKUP_LOCK.setRelease(IOState.IDLE);
+        Globals.BACKUP_LOCK.setRelease(IOState.IDLE);
     }
 }

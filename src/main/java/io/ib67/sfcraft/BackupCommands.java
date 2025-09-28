@@ -6,7 +6,6 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.command.CommandRegistryAccess;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
@@ -52,23 +51,6 @@ public class BackupCommands {
         var backup = mod.tracker.getTrackedBackups().get(_backup);
         mod.tracker.deleteBackup(backup);
         ctx.getSource().sendMessage(Text.of("Backup " + _backup + " is deleted successfully."));
-        return Command.SINGLE_SUCCESS;
-    }
-
-    public int cmdIssueBackup(CommandContext<ServerCommandSource> ctx) {
-        var s = ctx.getSource();
-        if (JustBackupMod.PERFORMING_BACKUP.get()) {
-            s.sendMessage(Text.of("You can't issue a backup because another backup is in progress."));
-            return Command.SINGLE_SUCCESS;
-        }
-        mod.issueBackup()
-                .whenComplete((backup, error) -> {
-                    if (error != null) {
-                        s.sendMessage(Text.of("Cannot backup, error: " + error.getMessage()));
-                    } else {
-                        s.sendMessage(Text.of("Backup created successfully! name: " + backup.name()));
-                    }
-                });
         return Command.SINGLE_SUCCESS;
     }
 
@@ -148,7 +130,7 @@ public class BackupCommands {
                         .then(argument("backupName", StringArgumentType.greedyString())
                                 .suggests(this::suggestBackups)
                                 .executes(this::cmdRestore)))
-                .then(literal("create").executes(this::cmdIssueBackup))
+//                .then(literal("create").executes(this::cmdIssueBackupFull)) todo
                 .then(literal("suspend").executes(this::cmdSuspend))
         );
     }

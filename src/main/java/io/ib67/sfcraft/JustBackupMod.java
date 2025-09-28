@@ -1,79 +1,47 @@
 package io.ib67.sfcraft;
 
 import com.github.luben.zstd.Zstd;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
-import com.mojang.brigadier.CommandDispatcher;
-import com.mojang.brigadier.arguments.StringArgumentType;
-import com.mojang.brigadier.context.CommandContext;
-import com.mojang.brigadier.suggestion.Suggestions;
-import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import io.ib67.sfcraft.config.JustBackupConfig;
 import io.ib67.sfcraft.config.StorageOption;
-import io.ib67.sfcraft.config.serializer.StorageOptionSerializer;
-import io.ib67.sfcraft.mixin.LevelStorageAccessor;
-import io.ib67.sfcraft.mixin.MixinMinecraftServer;
 import io.ib67.sfcraft.strategy.BackupStrategy;
 import io.ib67.sfcraft.strategy.BackupTracker;
 import io.ib67.sfcraft.strategy.LocalBackupStrategy;
 import io.ib67.sfcraft.strategy.S3BackupStrategy;
+import io.netty.buffer.ByteBufAllocator;
 import lombok.SneakyThrows;
 import net.fabricmc.api.ModInitializer;
 
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
-import net.jpountz.lz4.LZ4BlockInputStream;
-import net.minecraft.command.CommandRegistryAccess;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.command.CommandManager;
-import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import org.jetbrains.annotations.UnknownNullability;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.nio.file.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.ReentrantLock;
-
-import static net.minecraft.server.command.CommandManager.argument;
-import static net.minecraft.server.command.CommandManager.literal;
+import java.util.stream.Collectors;
 
 public class JustBackupMod implements ModInitializer {
     public static final String MOD_ID = "justbackup";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
-    /**
-     * This state indicates:
-     * 1. A minecraft auto-save is in-progress.
-     * 2. The backup is in-progress
-     */
-    public static final AtomicReference<IOState> BACKUP_LOCK = new AtomicReference<>(IOState.IDLE);
-    public static final Gson GSON = new GsonBuilder().setPrettyPrinting()
-            .registerTypeAdapter(StorageOption.class, new StorageOptionSerializer(
-                    Map.of("s3", StorageOption.S3.class,
-                            "local", StorageOption.Local.class)
-            ))
-            .create();
+    protected final Map<String, BackupSubject> backupSubjects = new HashMap<>();
+    protected volatile MinecraftServer server;
+    protected volatile boolean suspend;
+    protected byte[] zstdDict;
     protected ScheduledExecutorService scheduledBackupExecutor;
     protected JustBackupConfig config;
     protected BackupTracker tracker;
     protected Path backupIndexPath;
-    protected volatile MinecraftServer server;
-    protected volatile boolean suspend;
 
     @Override
     @SneakyThrows
@@ -89,20 +57,55 @@ public class JustBackupMod implements ModInitializer {
         if (Files.notExists(backupIndexPath))
             Files.createFile(backupIndexPath);
 
-        config = GSON.fromJson(Files.readString(configPath), JustBackupConfig.class);
+        config = Globals.GSON.fromJson(Files.readString(configPath), JustBackupConfig.class);
+        config.backupSubjects().forEach((k, v) -> {
+            var subjectPath = Path.of(v);
+            if (Files.notExists(subjectPath)) {
+                LOGGER.error("Backup subject {} does not exist.", v);
+                return;
+            }
+            backupSubjects.put(k, new BackupSubject(k, subjectPath, new ArrayList<>()));
+        });
+        if (config.zstdDictPath() != null && !config.zstdDictPath().isEmpty()) {
+            zstdDict = Files.readAllBytes(Path.of(config.zstdDictPath()));
+        }
         var strategy = createStrategy();
-        this.tracker = new BackupTracker(strategy, GSON.fromJson(Files.readString(backupIndexPath), new TypeToken<>() {
+        this.tracker = new BackupTracker(strategy, Globals.GSON.fromJson(Files.readString(backupIndexPath), new TypeToken<>() {
         }));
         LOGGER.info("Configuration has been loaded. Using storage option: {}", config.option().type());
         scheduledBackupExecutor = Executors.newSingleThreadScheduledExecutor();
+        registerWatchService();
         registerHandlers();
     }
 
+    private void registerWatchService() {
+        var watcherThread = new FileWatcherThread(
+                config.backupSubjects().entrySet().stream()
+                        .map(it -> Map.entry(it.getKey(), Path.of(it.getValue())))
+                        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
+                this::handleFileChanges
+        );
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            watcherThread.interrupt();
+        });
+        watcherThread.start();
+    }
+
+    private void handleFileChanges(String subject, Path path) {
+        synchronized (backupSubjects) {
+            backupSubjects.get(subject).changedFiles().add(path);
+        }
+    }
+
+    @SneakyThrows
     private void registerHandlers() {
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             LOGGER.info("Launching background threads...");
             this.server = server;
-            scheduledBackupExecutor.scheduleAtFixedRate(this::issueBackup,
+            if (config.bundleFullAtStartup()) {
+                backupAll(false);
+            }
+            scheduledBackupExecutor.scheduleAtFixedRate(() -> backupAll(config.incremental()),
                     config.backupIntervalMinutes(), config.backupIntervalMinutes(), TimeUnit.MINUTES);
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
@@ -123,12 +126,43 @@ public class JustBackupMod implements ModInitializer {
         });
     }
 
-    public CompletableFuture<Backup> issueBackup() {
+    public CompletableFuture<Map<String, Backup>> backupAll(boolean incremental) {
+        var map = new HashMap<String, CompletableFuture<Backup>>();
+        for (var entry : backupSubjects.entrySet()) {
+            map.put(entry.getKey(), issueBackup(entry.getKey(), incremental));
+        }
+        return CompletableFuture.allOf(map.values().toArray(new CompletableFuture[0]))
+                .thenApply(it -> {
+                    var _map = new HashMap<String, Backup>();
+                    map.forEach((k, v) -> _map.put(k, v.join()));
+                    return _map;
+                });
+    }
+
+    public CompletableFuture<Backup> issueBackup(String subjectName, boolean incremental) {
         if (suspend) {
             return CompletableFuture.failedFuture(new IllegalStateException("Backup is temporarily disabled"));
         }
-        server.getPlayerManager().broadcast(Text.literal("The server will begin the backup shortly, you may experience some lag."), false);
-        var worker = new BackupWorker(server, tracker, config);
+        var subject = backupSubjects.get(subjectName);
+        if (subject == null)
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Unknown backup subject: " + subjectName));
+        if (!incremental) {
+            try (var s = Files.walk(subject.root())) {
+                subject = new BackupSubject(subject.name(), subject.root(), s.filter(Files::isRegularFile).toList());
+            } catch (IOException e) {
+                return CompletableFuture.failedFuture(new IllegalArgumentException("Cannot perform full backup for " + subjectName, e));
+            }
+        }
+        var finalSubject = subject;
+        var worker = new BackupWorker(server, tracker, Path.of(config.temporaryBackupDir()),
+                subject, c ->
+                c.allowGunzip(config.allowGunzip())
+                        .relativeRoot(finalSubject.root())
+                        .allocator(ByteBufAllocator.DEFAULT)
+                        .maxWorkers(config.compressionWorkerThreads())
+                        .compressionLevel(config.compressionLevel())
+                        .dictionary(zstdDict)
+        );
         return CompletableFuture.supplyAsync(worker, scheduledBackupExecutor).whenComplete(this::onBackupComplete);
     }
 
@@ -138,7 +172,7 @@ public class JustBackupMod implements ModInitializer {
             server.getPlayerManager().broadcast(Text.literal("Backup failed. For administrators, please check your server console."), false);
             LOGGER.error(throwable.getMessage(), throwable);
         } else {
-            Files.writeString(backupIndexPath, GSON.toJson(tracker.getTrackedBackups()));
+            Files.writeString(backupIndexPath, Globals.GSON.toJson(tracker.getTrackedBackups()));
             server.getPlayerManager().broadcast(Text.literal("Backup success. " + backup), false);
         }
     }
@@ -154,17 +188,21 @@ public class JustBackupMod implements ModInitializer {
     private void saveConfig(Path configPath) {
         LOGGER.info("Saving default configuration");
         var cfg = new JustBackupConfig(
+                true,
+                true,
                 60,
                 5,
                 Zstd.defaultCompressionLevel(),
+                4,
                 true,
                 "./.backup_cache",
+                null, null,
                 new StorageOption.Local("backups", 0)
         );
         var path = Path.of(cfg.temporaryBackupDir());
         if (Files.notExists(path)) {
             Files.createDirectories(path);
         }
-        Files.writeString(configPath, GSON.toJson(cfg));
+        Files.writeString(configPath, Globals.GSON.toJson(cfg));
     }
 }

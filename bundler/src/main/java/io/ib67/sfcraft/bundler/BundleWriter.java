@@ -152,7 +152,7 @@ public class BundleWriter implements Closeable {
 
     @SneakyThrows
     private void writeReassembleInMem(Path path) {
-        if (!"region".equals(path.getParent().toString()) && !path.toString().endsWith(".mca")) {
+        if (!"region".equals(path.getParent().toString()) && !path.toString().endsWith(".mca")) { // todo use pattern matcher
             if(verbose) System.out.println("Mismatch " + path + ", parent: " + path.getParent());
             writePlain(path);
             return;

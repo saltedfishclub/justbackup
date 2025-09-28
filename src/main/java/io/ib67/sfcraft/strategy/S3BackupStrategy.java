@@ -84,7 +84,7 @@ public class S3BackupStrategy implements BackupStrategy {
         var target = temporaryDownloadPath.resolve("s3_" + System.currentTimeMillis());
         try (var fs = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             resp.transferTo(fs);
-            BundleReader.extract(target, restorePath);
+            BundleReader.builder().build().extract(target, restorePath);
         } finally {
             Files.deleteIfExists(target);
         }
