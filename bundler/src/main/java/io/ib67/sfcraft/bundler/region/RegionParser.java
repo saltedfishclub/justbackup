@@ -6,23 +6,32 @@ import it.unimi.dsi.fastutil.longs.LongList;
 import net.jpountz.lz4.LZ4BlockInputStream;
 
 import java.io.*;
-import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.zip.DeflaterInputStream;
 import java.util.zip.GZIPInputStream;
 
-public class RegionFileReassembler implements Closeable {
+public class RegionParser implements Closeable {
     protected final ByteBuf source;
     protected final byte[] sectorBuffer = new byte[4096];
+    protected final ByteBufAllocator allocator;
 
-    public RegionFileReassembler(Path file) throws IOException {
-        if (Files.size(file) < 8192) throw new IOException("The region file " + file + " has been truncated");
-        source = Unpooled.wrappedBuffer(Files.readAllBytes(file));
+    public RegionParser(Path file, ByteBufAllocator allocator) throws IOException {
+        this.allocator = allocator;
+        var size = (int) Files.size(file);
+        if (size < 8192) throw new IOException("The region file " + file + " has been truncated");
+        if(size > 8388608 * 2) throw new IOException("The region file " + file + " is too large"); //todo bug
+        source = allocator.buffer(size);
+        try (var fc = FileChannel.open(file, StandardOpenOption.READ)) {
+            while (source.writeBytes(fc, 0L, (int) size) > 0) ;
+        }
     }
 
-    public RegionFileReassembler(ByteBuf source) {
+    public RegionParser(ByteBuf source, ByteBufAllocator allocator) {
         this.source = source;
+        this.allocator = allocator;
         source.retain();
     }
 
@@ -53,12 +62,23 @@ public class RegionFileReassembler implements Closeable {
         if (compressType < 0) {
             // mcc todo
         }
-        buf.writeBytes(source, sectorLen-1);
+        buf.writeBytes(source, sectorLen - 1);
         return compressType;
     }
 
-    public ByteBuf writeReassembled(ByteBufAllocator alloc, RegionFile.CompressType newCompressType) throws IOException {
+    public void readChunkDecompress(int entry, ByteBuf buf) throws IOException {
+        var compressed = allocator.buffer();
+        var compressType = readChunk(entry, compressed);
+        try (var decompressor = getDecompressorByType(compressType, compressed)) {
+            while (buf.writeBytes(decompressor, 4096) != -1) ;
+        } finally {
+            compressed.release();
+        }
+    }
+
+    public ByteBuf writeReassembled(RegionFile.CompressType newCompressType) throws IOException {
         var chunks = readAllValidChunks();
+        var alloc = allocator;
         var compressed = alloc.buffer();
         var uncompressed = alloc.buffer();
         try (var regionFile = new RegionFile(alloc)) {

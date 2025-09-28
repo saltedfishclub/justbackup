@@ -2,7 +2,7 @@ package io.ib67.sfcraft.bundler;
 
 import com.github.luben.zstd.ZstdInputStreamNoFinalizer;
 import io.ib67.sfcraft.bundler.region.RegionFile;
-import io.ib67.sfcraft.bundler.region.RegionFileReassembler;
+import io.ib67.sfcraft.bundler.region.RegionParser;
 import io.netty.buffer.ByteBufAllocator;
 import lombok.Builder;
 
@@ -61,8 +61,8 @@ public class BundleReader {
                         toRead -= read;
                         entryData.writeBytes(buffer, 0, read);
                     }
-                    try (var reassembler = new RegionFileReassembler(entryData)) {
-                        var result = reassembler.writeReassembled(allocator, RegionFile.CompressType.GZIP);
+                    try (var reassembler = new RegionParser(entryData, allocator)) {
+                        var result = reassembler.writeReassembled(RegionFile.CompressType.GZIP);
                         try (var fc = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
                             result.readBytes(fc, 0, result.readableBytes());
                         } finally {

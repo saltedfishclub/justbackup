@@ -4,8 +4,7 @@ import com.github.luben.zstd.ZstdDictCompress;
 import com.github.luben.zstd.ZstdOutputStreamNoFinalizer;
 import io.ib67.kiwi.routine.Uni;
 import io.ib67.sfcraft.bundler.region.RegionFile;
-import io.ib67.sfcraft.bundler.region.RegionFileReassembler;
-import io.netty.buffer.AdaptiveByteBufAllocator;
+import io.ib67.sfcraft.bundler.region.RegionParser;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.ByteBufOutputStream;
 
@@ -21,12 +20,12 @@ import java.util.function.UnaryOperator;
 
 public class BundleWriter implements Closeable {
     public static Comparator<Path> SORT = BundleWriter::preferRegion;
+    protected static final ThreadLocal<byte[]> buffer = ThreadLocal.withInitial(() -> new byte[4096]);
     protected final ByteBufAllocator allocator;
     protected final boolean allowReassemble;
     protected final int compressionLevel;
     protected final Path relativeRoot;
     protected final EntryOutputStream outputStream;
-    protected final byte[] buffer;
 
     @SneakyThrows
     @Builder
@@ -48,7 +47,6 @@ public class BundleWriter implements Closeable {
         }
         if (maxWorkers > 1) zstdOut.setWorkers(maxWorkers);
         this.outputStream = new EntryOutputStream(zstdOut);
-        this.buffer = new byte[4096];
     }
 
     public static CompletableFuture<List<Path>> createBundleParallelized(
@@ -153,16 +151,16 @@ public class BundleWriter implements Closeable {
     @SneakyThrows
     private void writeReassembleInMem(Path path) {
         if (!"region".equals(path.getParent().toString()) && !path.toString().endsWith(".mca")) {
-            System.out.println("Mismatch "+path+", parent: "+path.getParent());
+            System.out.println("Mismatch " + path + ", parent: " + path.getParent());
             writePlain(path);
             return;
         }
-        System.out.println("Reassembling "+path);
+        System.out.println("Reassembling " + path);
         var uncompressed = allocator.buffer();
         var rPath = relativeRoot.toAbsolutePath().relativize(path.toAbsolutePath());
         try (var out = new EntryOutputStream(new ByteBufOutputStream(uncompressed));
-             var rf = new RegionFileReassembler(path)) {
-            var result = rf.writeReassembled(allocator, RegionFile.CompressType.NONE);
+             var rf = new RegionParser(path, allocator)) {
+            var result = rf.writeReassembled(RegionFile.CompressType.NONE);
             var length = result.readableBytes();
             out.writeEntryHeader(rPath.toString(), BundleEntry.ATTR_REASSEMBLE, length, System.currentTimeMillis());
             result.readBytes(out, length);
@@ -178,11 +176,11 @@ public class BundleWriter implements Closeable {
 
     private void writePlain(Path path) throws IOException {
         var rPath = relativeRoot.toAbsolutePath().relativize(path.toAbsolutePath());
-        var buffer = this.buffer;
         var outputStream = this.outputStream;
         outputStream.writeEntryHeader(rPath.toString(), (short) 0, Files.size(path), 0);
         var read = 0;
         try (var fs = Files.newInputStream(path)) {
+            var buffer = BundleWriter.buffer.get();
             while ((read = fs.read(buffer)) > 0) {
                 outputStream.write(buffer, 0, read);
             }
