@@ -24,8 +24,12 @@ public class RegionParser implements Closeable {
         if (size < 8192) throw new IOException("The region file " + file + " has been truncated");
         if(size > 8388608 * 2) throw new IOException("The region file " + file + " is too large"); //todo bug
         source = allocator.buffer(size);
+
         try (var fc = FileChannel.open(file, StandardOpenOption.READ)) {
-            while (source.writeBytes(fc, 0L, (int) size) > 0) ;
+            var toRead = size;
+            while(toRead > 0){
+                toRead -= source.writeBytes(fc, 0L, (int) size);
+            }
         }
     }
 

@@ -24,6 +24,7 @@ public class BundleWriter implements Closeable {
     protected final ByteBufAllocator allocator;
     protected final boolean allowReassemble;
     protected final int compressionLevel;
+    protected final boolean verbose;
     protected final Path relativeRoot;
     protected final EntryOutputStream outputStream;
 
@@ -35,12 +36,13 @@ public class BundleWriter implements Closeable {
             int maxWorkers,
             Path relativeRoot,
             OutputStream outputStream,
-            byte[] dictionary, ByteBufAllocator allocator
+            byte[] dictionary, ByteBufAllocator allocator, boolean verbose
     ) {
         this.allowReassemble = allowGunzip;
         this.compressionLevel = compressionLevel;
         this.relativeRoot = relativeRoot;
         this.allocator = allocator == null ? ByteBufAllocator.DEFAULT : allocator;
+        this.verbose = verbose;
         var zstdOut = new ZstdOutputStreamNoFinalizer(outputStream, compressionLevel);
         if (dictionary != null) {
             zstdOut.setDict(new ZstdDictCompress(dictionary, compressionLevel));
@@ -151,11 +153,11 @@ public class BundleWriter implements Closeable {
     @SneakyThrows
     private void writeReassembleInMem(Path path) {
         if (!"region".equals(path.getParent().toString()) && !path.toString().endsWith(".mca")) {
-            System.out.println("Mismatch " + path + ", parent: " + path.getParent());
+            if(verbose) System.out.println("Mismatch " + path + ", parent: " + path.getParent());
             writePlain(path);
             return;
         }
-        System.out.println("Reassembling " + path);
+        if(verbose) System.out.println("Reassembling " + path);
         var uncompressed = allocator.buffer();
         var rPath = relativeRoot.toAbsolutePath().relativize(path.toAbsolutePath());
         try (var out = new EntryOutputStream(new ByteBufOutputStream(uncompressed));
