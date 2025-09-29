@@ -7,6 +7,7 @@ import io.ib67.sfcraft.config.StorageOption;
 import io.ib67.sfcraft.strategy.BackupStrategy;
 import io.ib67.sfcraft.strategy.BackupTracker;
 import io.ib67.sfcraft.strategy.LocalBackupStrategy;
+import io.ib67.sfcraft.strategy.S3BackupStrategy;
 import io.netty.buffer.ByteBufAllocator;
 import lombok.SneakyThrows;
 import net.fabricmc.api.ModInitializer;
@@ -19,6 +20,7 @@ import org.jetbrains.annotations.UnknownNullability;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.awt.*;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.ArrayList;
@@ -28,6 +30,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 public class JustBackupMod implements ModInitializer {
@@ -104,7 +107,12 @@ public class JustBackupMod implements ModInitializer {
             if (config.bundleFullAtStartup()) {
                 backupAll(false);
             }
-            scheduledBackupExecutor.scheduleAtFixedRate(() -> backupAll(config.incremental()),
+            scheduledBackupExecutor.scheduleAtFixedRate(() -> {
+                        if (!suspend) backupAll(config.incremental()).thenAccept(it -> {
+                            LOGGER.info("Backup success!");
+                            it.forEach((k, v) -> LOGGER.info(k + ": " + v));
+                        });
+                    },
                     config.backupIntervalMinutes(), config.backupIntervalMinutes(), TimeUnit.MINUTES);
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
@@ -127,6 +135,11 @@ public class JustBackupMod implements ModInitializer {
 
     public CompletableFuture<Map<String, Backup>> backupAll(boolean incremental) {
         var map = new HashMap<String, CompletableFuture<Backup>>();
+        server.getPlayerManager().broadcast(
+                Text.literal(" BACKUP >> ").withColor(Color.RED.getRGB()).styled(it -> it.withBold(true))
+                        .append(Text.of("The server is performing a backup, you may experience some lag.")),
+                false
+        );
         for (var entry : backupSubjects.entrySet()) {
             map.put(entry.getKey(), issueBackup(entry.getKey(), incremental));
         }
@@ -139,9 +152,6 @@ public class JustBackupMod implements ModInitializer {
     }
 
     public CompletableFuture<Backup> issueBackup(String subjectName, boolean incremental) {
-        if (suspend) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Backup is temporarily disabled"));
-        }
         var subject = backupSubjects.get(subjectName);
         if (subject == null)
             return CompletableFuture.failedFuture(new IllegalArgumentException("Unknown backup subject: " + subjectName));
@@ -179,7 +189,7 @@ public class JustBackupMod implements ModInitializer {
     private BackupStrategy createStrategy() {
         return switch (config.option()) {
             case StorageOption.Local local -> new LocalBackupStrategy(local);
-            case StorageOption.S3 s3 -> throw new IllegalStateException();
+            case StorageOption.S3 s3 -> new S3BackupStrategy(s3, Path.of(config.temporaryBackupDir()));
         };
     }
 
@@ -187,6 +197,7 @@ public class JustBackupMod implements ModInitializer {
     private void saveConfig(Path configPath) {
         LOGGER.info("Saving default configuration");
         var cfg = new JustBackupConfig(
+                true,
                 true,
                 true,
                 60,

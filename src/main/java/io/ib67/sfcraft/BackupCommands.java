@@ -2,10 +2,12 @@ package io.ib67.sfcraft;
 
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import lombok.extern.log4j.Log4j2;
 import net.minecraft.command.CommandRegistryAccess;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
@@ -13,105 +15,41 @@ import net.minecraft.text.ClickEvent;
 import net.minecraft.text.Text;
 
 import java.awt.*;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Comparator;
+import java.lang.ref.WeakReference;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 
+@Log4j2
 public class BackupCommands {
     protected final JustBackupMod mod;
     protected Runnable restoreIssued;
+    protected final List<String> helpMessage = List.of(
+            "__ Help messages of JustBackup __",
+            " /backup help ",
+            "    -- Show this message",
+            " /backup list ",
+            "    -- List backups",
+            " /backup restore <backupName>",
+            "    -- Restore the backup on next server restart.",
+            "    Can be cancelled by /backup cancelrestore",
+            " /backup delete <backupName>",
+            "    -- Delete a backup. This does not ask for a confirmation.",
+            " /backup create <incremental: true/false> <subject / \"@all\">",
+            "    -- Create a backup.",
+            "    Options:",
+            "      incremental: Only bundle files detected changes",
+            "      subject: specify a subject to backup. Or use \"@all\" to backup all subjects.",
+            " /backup suspend",
+            "    -- Temporarily stops the auto-backup worker, until next restart or ",
+            "    typing this command again."
+    );
 
     public BackupCommands(JustBackupMod mod) {
         this.mod = mod;
-    }
-
-    public int cmdList(CommandContext<ServerCommandSource> ctx) {
-        var s = ctx.getSource();
-        s.sendFeedback(() -> Text.of("Tracked backups:"), false);
-        for (Backup value : mod.tracker.getTrackedBackups().values()) {
-            var restoreClick = Text.literal("[RESTORE]").withColor(Color.GREEN.getRGB())
-                    .styled(it -> it.withClickEvent(new ClickEvent.SuggestCommand("/backup restore " + value.backupKey())));
-            var deleteClick = Text.literal("[DELETE]").withColor(Color.RED.getRGB())
-                    .styled(it -> it.withClickEvent(new ClickEvent.SuggestCommand("/backup delete " + value.backupKey())));
-            var message = Text.literal(" - " + value.name() + " (" + value.backupKey() + ") " +
-                    (value.incremental() ? "incremental" : "full") + "  ").append(restoreClick).append("  ").append(deleteClick);
-            s.sendMessage(message);
-            s.sendMessage(Text.of("    Size: " + Math.floorDiv(value.sizeTotal(), 1024 * 1024) + "MiB"));
-        }
-        return Command.SINGLE_SUCCESS;
-    }
-
-    public int cmdDelete(CommandContext<ServerCommandSource> ctx) {
-        var _backup = ctx.getArgument("backupName", String.class);
-        var backup = mod.tracker.getTrackedBackups().get(_backup);
-        mod.tracker.deleteBackup(backup);
-        ctx.getSource().sendMessage(Text.of("Backup " + _backup + " is deleted successfully."));
-        return Command.SINGLE_SUCCESS;
-    }
-
-    public int cmdSuspend(CommandContext<ServerCommandSource> ctx) {
-        mod.suspend = !mod.suspend;
-        ctx.getSource().sendMessage(Text.of("Backup disabled: " + mod.suspend));
-        return Command.SINGLE_SUCCESS;
-    }
-
-    public int cmdRestore(CommandContext<ServerCommandSource> ctx) {
-        var s = ctx.getSource();
-        var pm = s.getServer().getPlayerManager();
-        var _backup = ctx.getArgument("backupName", String.class);
-        var backup = mod.tracker.getTrackedBackups().get(_backup);
-        if (backup == null) {
-            s.sendMessage(Text.of("Invalid backup " + _backup));
-            return 0;
-        }
-        if (restoreIssued != null) {
-            s.sendMessage(Text.of("Another restoration is in progress. try /backup cancel to cancel it"));
-            return 0;
-        }
-        s.sendMessage(Text.literal("Please restart your server to take changes"));
-        restoreIssued = () -> {
-            System.out.println("Recovering backup... ");
-            try {
-                var toOverride = Path.of(backup.from());
-                var old = Path.of(backup.from() + "_old");
-                if (Files.exists(old)) {
-                    try (var f = Files.walk(old)) {
-                        f.sorted(Comparator.reverseOrder())
-                                .forEach(it -> {
-                                    try {
-                                        Files.deleteIfExists(it);
-                                    } catch (IOException e) {
-                                        throw new RuntimeException(e);
-                                    }
-                                });
-                    }
-                }
-                Files.deleteIfExists(old);
-                Files.move(toOverride, old);
-                System.out.println("Moved your old save to " + old);
-                mod.tracker.recoverBackup(backup, toOverride);
-                System.out.println("Recover successfully!");
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        };
-        return Command.SINGLE_SUCCESS;
-    }
-
-    public int cmdHelp(CommandContext<ServerCommandSource> serverCommandSourceCommandContext) {
-        // todo i18n
-        return 0;
-    }
-
-    public int cmdCancelRestore(CommandContext<ServerCommandSource> serverCommandSourceCommandContext) {
-        restoreIssued = null;
-        serverCommandSourceCommandContext.getSource().sendMessage(Text.of("Operation cancelled."));
-        return 0;
     }
 
     public void registerCommand(
@@ -130,9 +68,135 @@ public class BackupCommands {
                         .then(argument("backupName", StringArgumentType.greedyString())
                                 .suggests(this::suggestBackups)
                                 .executes(this::cmdRestore)))
-//                .then(literal("create").executes(this::cmdIssueBackupFull)) todo
-                .then(literal("suspend").executes(this::cmdSuspend))
-        );
+                .then(literal("create")
+                        .then(argument("incremental", BoolArgumentType.bool())
+                                .then(argument("subject", StringArgumentType.greedyString())
+                                        .executes(this::createBackupBySubject))
+                                .then(literal("@all").executes(this::fullBackup)))
+                        .then(literal("suspend").executes(this::cmdSuspend))
+                ));
+    }
+
+    private int createBackupBySubject(CommandContext<ServerCommandSource> context) {
+        var incremental = BoolArgumentType.getBool(context, "incremental");
+        var subject = StringArgumentType.getString(context, "subject");
+        var s = context.getSource();
+        s.sendMessage(Text.literal("The issued backup has been scheduled.").withColor(Color.CYAN.getRGB()));
+        mod.issueBackup(subject, incremental);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int fullBackup(CommandContext<ServerCommandSource> context) {
+        var incremental = BoolArgumentType.getBool(context, "incremental");
+        var s = context.getSource();
+        s.sendMessage(Text.literal("The issued backup has been scheduled.").withColor(Color.CYAN.getRGB()));
+        var weakRef = new WeakReference<>(s);
+        mod.backupAll(incremental).thenAccept(result -> {
+            var ref = weakRef.get();
+            if (ref == null) {
+                ref = mod.server.getCommandSource();
+            }
+            ref.sendMessage(Text.literal("-- BACKUP RESULT SUMMARY --"));
+            for (var entry : result.entrySet()) {
+                var k = entry.getKey();
+                var v = entry.getValue();
+                ref.sendMessage(Text.literal("  - [" + k + "]: ").append(v.toText()));
+                ref.sendMessage(Text.literal("BACKUP KEY: " + v.backupKey()).withColor(Color.GRAY.getRGB()));
+                ref.sendMessage(Text.literal("GENERATED FROM: " + v.from()).withColor(Color.GRAY.getRGB()));
+            }
+        });
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int cmdSuspend(CommandContext<ServerCommandSource> context) {
+        var s = context.getSource();
+        // this is safe as we are the only writer here.
+        var suspend = mod.suspend;
+        mod.suspend = !suspend;
+        if (suspend) {
+            s.sendMessage(Text.of("The automatic backup system is now re-enabled."));
+        } else {
+            s.sendMessage(Text.of("The automatic backup system is now disabled."));
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int cmdRestore(CommandContext<ServerCommandSource> context) {
+        var s = context.getSource();
+        if (restoreIssued != null) {
+            s.sendMessage(Text.literal("Another restore request is already present.").withColor(Color.RED.getRGB()));
+            s.sendMessage(Text.of("TIP: Use `/backup cancelrestore` to cancel that request."));
+            return 0;
+        }
+        var backupName = StringArgumentType.getString(context, "backupName");
+        restoreIssued = () -> {
+            //todo implementation
+        };
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int cmdDelete(CommandContext<ServerCommandSource> context) {
+        var backupName = StringArgumentType.getString(context, "backupName");
+        var backup = mod.tracker.getTrackedBackups().get(backupName);
+        var source = context.getSource();
+        if (backup == null) {
+            source.sendMessage(Text.of("Invalid backup. No backups are named '" + backupName + "'"));
+            return 0;
+        }
+        try {
+            mod.tracker.deleteBackup(backup);
+            source.sendMessage(Text.of("Backup has been deleted."));
+        } catch (Exception e) {
+            source.sendMessage(Text.of("Backup has not been deleted successfully. ERROR: " + e));
+            log.error(e);
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int cmdList(CommandContext<ServerCommandSource> context) {
+        var source = context.getSource();
+        var trackedBackups = mod.tracker.getTrackedBackups();
+        if (trackedBackups.isEmpty()) {
+            source.sendMessage(Text.of("No backups are neither created nor tracked yet."));
+            return Command.SINGLE_SUCCESS;
+        }
+        source.sendMessage(Text.of("ALL TRACKED BACKUPS:"));
+        for (var entry : trackedBackups.entrySet()) {
+            var backupKey = entry.getKey();
+            var backup = entry.getValue();
+            source.sendMessage(Text.literal(" - [" + backup.name() + "] ").append(backup.toText()));
+            source.sendMessage(Text.literal("   ").append(
+                            Text.literal("[DELETE]").withColor(Color.RED.getRGB()).styled(it -> it.withClickEvent(
+                                    new ClickEvent.SuggestCommand("/backup delete " + backupKey)
+                            ))).append(Text.literal(" ")).append(
+                            Text.literal("[RESTORE]").withColor(Color.CYAN.getRGB()).styled(it -> it.withClickEvent(
+                                    new ClickEvent.SuggestCommand("/backup restore " + backupKey)
+                            ))
+                    )
+            );
+        }
+        return 0;
+    }
+
+    private int cmdCancelRestore(CommandContext<ServerCommandSource> context) {
+        var source = context.getSource();
+        if (restoreIssued != null) {
+            restoreIssued = null;
+            source.sendMessage(Text.of("The backup restoration request has been cancelled."));
+            return 0;
+        }
+        source.sendMessage(Text.of("You have no backup restoration request in flight."));
+        return 0;
+    }
+
+    private int cmdHelp(CommandContext<ServerCommandSource> ctx) {
+        var source = ctx.getSource();
+        for (String s : helpMessage) {
+            if (s.startsWith(" /")) {
+                source.sendMessage(Text.literal(s).withColor(Color.CYAN.getRGB()));
+            }
+        }
+        return Command.SINGLE_SUCCESS;
     }
 
     private CompletableFuture<Suggestions> suggestBackups(CommandContext<ServerCommandSource> serverCommandSourceCommandContext, SuggestionsBuilder suggestionsBuilder) {

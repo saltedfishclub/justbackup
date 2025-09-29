@@ -14,6 +14,7 @@ import java.util.Map;
 public record JustBackupConfig(
         boolean bundleFullAtStartup,
         boolean incremental,
+        boolean broadcast,
         long backupIntervalMinutes,
         int keepBackups,
         int compressionLevel,
@@ -35,5 +36,8 @@ public record JustBackupConfig(
             log.warn("Backup subjects are not configured. The mod will not work!");
         }
         Validate.notNull(option, "option cannot be null");
+        if(backupSubjects.containsKey("@all")){
+            throw new IllegalArgumentException("A ambiguous name \"@all\" is not allowed");
+        }
     }
 }
