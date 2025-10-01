@@ -12,6 +12,7 @@ import lombok.Builder;
 import lombok.SneakyThrows;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -142,12 +143,33 @@ public class BundleWriter implements Closeable {
     }
 
     public void write(Path path, boolean suggestGunzip) throws IOException {
+        if(Files.isDirectory(path)) return;
+        if(Files.isSymbolicLink(path)) {
+            writeSymbol(path);
+            return;
+        }
         if (suggestGunzip && allowReassemble) {
             //todo size limit
             writeReassembleInMem(path);
             return;
         }
         writePlain(path);
+    }
+
+    private void writeSymbol(Path path) throws IOException {
+        if (!Files.isSymbolicLink(path)) return;
+        var target = Files.readSymbolicLink(path);
+        var rPath = relativeRoot.toAbsolutePath().relativize(path.toAbsolutePath());
+        String linkTarget;
+        try{
+            linkTarget = relativeRoot.relativize(target).toString();
+        } catch (Exception e) {
+            linkTarget = target.toAbsolutePath().toString();
+        }
+        var targetBytes = linkTarget.getBytes(StandardCharsets.UTF_8);
+
+        this.outputStream.writeEntryHeader(rPath.toString(), BundleEntry.ATTR_SYMLINK,targetBytes.length, System.currentTimeMillis());
+        this.outputStream.write(targetBytes);
     }
 
     @SneakyThrows

@@ -31,7 +31,7 @@ public class Main {
         var out = opts.string("out", "Output. Can be jpack bundle or directory", null);
         var help = opts.bool("help", false);
         var allowGunzip = opts.bool("reasm", "Should we reassemble NBT files for maximum compression rate", true);
-
+        var linkSymbol = opts.bool("link","Should we store/decompress symbol links? This may set you vulnerable if you're decompressing a malformed archive.", true);
         // useless parallel
         var parallel = opts.bool("parallel", "Use parallelized bundler. This conflicts with compress options", false);
         var parallelThreshold = opts.integer("threshold", "The threshold of parallel bundling", 512);
@@ -82,7 +82,7 @@ public class Main {
         }
 
         if (in.endsWith(".swb.zst")) {
-            BundleReader.builder().build().extract(inPath, outPath);
+            BundleReader.builder().linkSymbol(linkSymbol).build().extract(inPath, outPath);
         } else if (out.endsWith(".swb.zst")) {
             UnaryOperator<BundleWriter.BundleWriterBuilder> cfg = it -> it
                     .allowGunzip(allowGunzip)

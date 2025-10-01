@@ -15,5 +15,6 @@ public record BundleEntry(
         String name
 ) {
     public static short ATTR_REASSEMBLE = 1;
+    public static short ATTR_SYMLINK = 2;
     public static short MAGIC = (short) 0xA2E3;
 }

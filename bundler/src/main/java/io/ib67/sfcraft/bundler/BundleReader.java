@@ -16,21 +16,24 @@ import java.util.HashMap;
 public class BundleReader {
     protected final long maxTime;
     protected final long minTime;
+    protected final boolean linkSymbol;
     private final byte[] buffer = new byte[4096];
     protected final boolean skipOldEntry;
     protected final ByteBufAllocator allocator;
     protected final byte[] dict;
 
     @Builder
-    public BundleReader(long maxTime, long minTime, boolean skipOldEntry, ByteBufAllocator allocator, byte[] dict) {
+    public BundleReader(long maxTime, long minTime, boolean linkSymbol, boolean skipOldEntry, ByteBufAllocator allocator, byte[] dict) {
         this.maxTime = maxTime == 0 ? Long.MAX_VALUE : maxTime;
         this.minTime = minTime;
+        this.linkSymbol = linkSymbol;
         this.skipOldEntry = skipOldEntry;
         this.allocator = allocator == null ? ByteBufAllocator.DEFAULT : allocator;
         this.dict = dict;
     }
 
     public void extract(Path bundle, Path destination) throws IOException {
+        var symbolsToLink = new HashMap<String, String>();
         var readMaps = new HashMap<String, Long>();
         try (var zstd = new ZstdInputStreamNoFinalizer(Files.newInputStream(bundle, StandardOpenOption.READ));
              var in = new EntryInputStream(zstd)) {
@@ -52,7 +55,14 @@ public class BundleReader {
                 var path = destination.resolve(entry.name()); // todo prevent path underflow
                 var parentDir = path.getParent();
                 if (Files.notExists(parentDir)) Files.createDirectories(parentDir);
-                if ((entry.attribute() & BundleEntry.ATTR_REASSEMBLE) != 0) {
+                if ((entry.attribute() & BundleEntry.ATTR_SYMLINK) != 0) {
+                    var toRead = (int) entry.length();
+                    var strArr = new byte[toRead];
+                    while ((toRead -= in.read(strArr, (int) (entry.length() - toRead), toRead)) > 0) ;
+                    var target = new String(strArr);
+                    var targetPath = Path.of(target);
+                    Files.createSymbolicLink(targetPath, path);
+                } else if ((entry.attribute() & BundleEntry.ATTR_REASSEMBLE) != 0) {
                     var entryData = allocator.buffer();
                     var toRead = entry.length();
                     var buffer = this.buffer;
