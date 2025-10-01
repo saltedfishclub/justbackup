@@ -26,14 +26,15 @@ public class LocalBackupStrategy implements BackupStrategy {
     @Override
     @SneakyThrows
     public Backup createBackup(String subject, Path from, Path pathToBundle) {
+        var parent = backupParentRoot.resolve(subject);
         var result = new Backup(
                 pathToBundle.getFileName().toString(),
-                pathToBundle.getFileName().toString(),
+                Path.of(subject).resolve(pathToBundle.getFileName()).normalize().toString(),
                 "local", from.toString(), false, Files.size(pathToBundle));
-        var parent = backupParentRoot.resolve(subject);
         if(Files.notExists(parent)) {
             Files.createDirectories(parent);
         }
+        //todo new name
         Files.move(pathToBundle, parent.resolve(pathToBundle.getFileName()));
         return result;
     }

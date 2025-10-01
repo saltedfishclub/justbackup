@@ -26,7 +26,7 @@ public class Main {
     @SneakyThrows
     public static void main(String[] args) {
         var opts = ArgOpts.builder()
-                .args(args).description("Tools for .jbp.zst format bundle").programName("jpack").build();
+                .args(args).description("Tools for .swb.zst format bundle").programName("jpack").build();
         var in = opts.string("in", "Input. Can be directory or jpack bundle", null);
         var out = opts.string("out", "Output. Can be jpack bundle or directory", null);
         var help = opts.bool("help", false);
@@ -81,9 +81,9 @@ public class Main {
             return;
         }
 
-        if (in.endsWith(".jbp.zst")) {
+        if (in.endsWith(".swb.zst")) {
             BundleReader.builder().build().extract(inPath, outPath);
-        } else if (out.endsWith(".jbp.zst")) {
+        } else if (out.endsWith(".swb.zst")) {
             UnaryOperator<BundleWriter.BundleWriterBuilder> cfg = it -> it
                     .allowGunzip(allowGunzip)
                     .relativeRoot(inPath)

@@ -62,12 +62,18 @@ public class BundleReader {
                         entryData.writeBytes(buffer, 0, read);
                     }
                     try (var reassembler = new RegionParser(entryData, allocator)) {
-                        var result = reassembler.writeReassembled(RegionFile.CompressType.GZIP);
+                        var result = reassembler.writeReassembled(RegionFile.CompressType.ZLIB);
                         try (var fc = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
                             result.readBytes(fc, 0, result.readableBytes());
                         } finally {
                             result.release();
                         }
+                    } catch (Exception e) {
+                        try (var ch = FileChannel.open(Path.of("dump.mca"), StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+                            entryData.readerIndex(0);
+                            entryData.readBytes(ch, 0, entryData.readableBytes());
+                        }
+                        throw new IOException("Error while reassembling " + entry.name(), e);
                     }
                 } else {
                     writePlain(path, entry, in);

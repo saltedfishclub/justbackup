@@ -67,13 +67,15 @@ dependencies {
     shadow project(":bundler")
     shadow 'software.amazon.awssdk:s3:2.34.0'
 }
-
 configurations.implementation.extendsFrom(configurations.shadow)
 shadowJar {
     configurations = [project.configurations.shadow]
     exclude("META-INF")
     dependencies {
         exclude(dependency("software.amazon.awssdk:aws-xml-protocol:.*"))
+        exclude(dependency("org.lz4:lz4-java:.*"))
+        exclude(dependency("it.unimi.dsi:fastutil:.*"))
+        exclude(dependency("io.netty:netty-all:.*"))
     }
     minimize()
     //relocate 'com.google', 'sfcraft.relocation.google'

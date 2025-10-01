@@ -75,7 +75,7 @@ public class BundleWriter implements Closeable {
             var futures = new ArrayList<CompletableFuture<Path>>();
             for (int i = 0; i < parted.size(); i++) {
                 var pathList = parted.get(i);
-                var output = parentOfBundle.resolve("Worker_" + System.currentTimeMillis() + "_" + i + ".jbp.zst");
+                var output = parentOfBundle.resolve("Worker_" + System.currentTimeMillis() + "_" + i + ".swb.zst");
                 var future = CompletableFuture.supplyAsync(() -> createBundleWorker(pathList, output, config), executor);
                 futures.add(future);
             }
@@ -142,7 +142,7 @@ public class BundleWriter implements Closeable {
     }
 
     public void write(Path path, boolean suggestGunzip) throws IOException {
-        if (suggestGunzip) {
+        if (suggestGunzip && allowReassemble) {
             //todo size limit
             writeReassembleInMem(path);
             return;
@@ -158,22 +158,26 @@ public class BundleWriter implements Closeable {
             return;
         }
         if(verbose) System.out.println("Reassembling " + path);
-        var uncompressed = allocator.buffer();
+        var finalResult = allocator.buffer();
         var rPath = relativeRoot.toAbsolutePath().relativize(path.toAbsolutePath());
-        try (var out = new EntryOutputStream(new ByteBufOutputStream(uncompressed));
+        try (var out = new EntryOutputStream(new ByteBufOutputStream(finalResult));
              var rf = new RegionParser(path, allocator)) {
+            // uncompressed result
             var result = rf.writeReassembled(RegionFile.CompressType.NONE);
             var length = result.readableBytes();
             out.writeEntryHeader(rPath.toString(), BundleEntry.ATTR_REASSEMBLE, length, System.currentTimeMillis());
             result.readBytes(out, length);
             result.release();
-            uncompressed.readBytes(outputStream, uncompressed.readableBytes());
+            // all done
         } catch (IOException e) {
             System.err.println("Failed to parse region " + path + ": " + e);
+            finalResult.release();
             writePlain(path);
-        } finally {
-            uncompressed.release();
+            return;
         }
+        finalResult.readBytes(outputStream, finalResult.readableBytes());
+        finalResult.release();
+
     }
 
     private void writePlain(Path path) throws IOException {
@@ -186,6 +190,9 @@ public class BundleWriter implements Closeable {
             while ((read = fs.read(buffer)) > 0) {
                 outputStream.write(buffer, 0, read);
             }
+        }catch(IOException e){
+            System.err.println("Error while bundling "+path);
+            throw e;
         }
     }
 

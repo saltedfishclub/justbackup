@@ -11,7 +11,7 @@ public record Backup(
         long sizeTotal
 ) {
     public Text toText(){
-        return Text.of("sizeTotal: "+((sizeTotal / 1024.0) / 1024.0) + "GiB, "+
+        return Text.of("sizeTotal: "+Math.round(((sizeTotal / 1024.0) / 1024.0) * 100) * 0.01 + "MiB, "+
                 (incremental ? "incremental" :"") + ", type: "+type+"."
         );
     }

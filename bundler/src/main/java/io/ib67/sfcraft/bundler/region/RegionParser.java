@@ -22,12 +22,12 @@ public class RegionParser implements Closeable {
         this.allocator = allocator;
         var size = (int) Files.size(file);
         if (size < 8192) throw new IOException("The region file " + file + " has been truncated");
-        if(size > 8388608 * 2) throw new IOException("The region file " + file + " is too large"); //todo bug
+        if (size > 8388608 * 2) throw new IOException("The region file " + file + " is too large"); //todo bug
         source = allocator.buffer(size);
 
         try (var fc = FileChannel.open(file, StandardOpenOption.READ)) {
             var toRead = size;
-            while(toRead > 0){
+            while (toRead > 0) {
                 toRead -= source.writeBytes(fc, 0L, (int) size);
             }
         }
@@ -66,6 +66,7 @@ public class RegionParser implements Closeable {
         if (compressType < 0) {
             // mcc todo
         }
+        if (sectorLen == 0) return compressType;
         buf.writeBytes(source, sectorLen - 1);
         return compressType;
     }

@@ -33,19 +33,14 @@ public record BackupWorker(
         if (server == null) {
             throw new IllegalStateException("MinecraftServer is not initialized yet, not doing backup");
         }
-        int i = 0;
+        server.saveAll(true, true, false);
         while (!BACKUP_LOCK.compareAndSet(IOState.IDLE, IOState.BACKUP)) {
             log.info("Server is saving world while performing backup! waiting...");
-            i++;
             Thread.sleep(2000);
         }
         // performing backup is now true
-        var tmpBundle = tmpDir.resolve("backup_" + subject + "_" + System.currentTimeMillis() + ".swb.zst");
+        var tmpBundle = tmpDir.resolve("backup_" + subject.name() + "_" + System.currentTimeMillis() + ".swb.zst");
         try {
-            if (i == 0) {
-                // not saved yet.
-                server.saveAll(true, true, false);
-            }
             // tmp file path
             log.info("Creating bundle {}", tmpBundle);
             BundleWriter.createBundle(tmpBundle, subject.changedFiles(), config);

@@ -30,13 +30,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 public class JustBackupMod implements ModInitializer {
     public static final String MOD_ID = "justbackup";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     protected final Map<String, BackupSubject> backupSubjects = new HashMap<>();
+    protected int lastBackupServerTicks;
     protected volatile MinecraftServer server;
     protected volatile boolean suspend;
     protected byte[] zstdDict;
@@ -63,7 +63,7 @@ public class JustBackupMod implements ModInitializer {
         config.backupSubjects().forEach((k, v) -> {
             var subjectPath = Path.of(v);
             if (Files.notExists(subjectPath)) {
-                LOGGER.error("Backup subject {} does not exist.", v);
+                LOGGER.error("Backup _subject {} does not exist.", v);
                 return;
             }
             backupSubjects.put(k, new BackupSubject(k, subjectPath, new ArrayList<>()));
@@ -93,9 +93,11 @@ public class JustBackupMod implements ModInitializer {
         watcherThread.start();
     }
 
-    private void handleFileChanges(String subject, Path path) {
+    private void handleFileChanges(String _subject, Path path) {
         synchronized (backupSubjects) {
-            backupSubjects.get(subject).changedFiles().add(path);
+            var subject = backupSubjects.get(_subject);
+            if (subject != null)
+                subject.changedFiles().add(path); // check null
         }
     }
 
@@ -108,6 +110,12 @@ public class JustBackupMod implements ModInitializer {
                 backupAll(false);
             }
             scheduledBackupExecutor.scheduleAtFixedRate(() -> {
+                        if (lastBackupServerTicks > 0 && lastBackupServerTicks == server.getTicks()) {
+                            // the server is idling
+                            LOGGER.debug("Server is idling, not backing up.");
+                            return;
+                        }
+                        lastBackupServerTicks = server.getTicks();
                         if (!suspend) backupAll(config.incremental()).thenAccept(it -> {
                             LOGGER.info("Backup success!");
                             it.forEach((k, v) -> LOGGER.info(k + ": " + v));
@@ -125,6 +133,7 @@ public class JustBackupMod implements ModInitializer {
         var command = new BackupCommands(this);
         CommandRegistrationCallback.EVENT.register(command::registerCommand);
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            LOGGER.info("Shutting down the executor");
             scheduledBackupExecutor.shutdown();
             if (command.restoreIssued != null) {
                 command.restoreIssued.run();
@@ -134,6 +143,7 @@ public class JustBackupMod implements ModInitializer {
     }
 
     public CompletableFuture<Map<String, Backup>> backupAll(boolean incremental) {
+        if (backupSubjects.isEmpty()) return CompletableFuture.completedFuture(Map.of());
         var map = new HashMap<String, CompletableFuture<Backup>>();
         server.getPlayerManager().broadcast(
                 Text.literal(" BACKUP >> ").withColor(Color.RED.getRGB()).styled(it -> it.withBold(true))
@@ -146,7 +156,11 @@ public class JustBackupMod implements ModInitializer {
         return CompletableFuture.allOf(map.values().toArray(new CompletableFuture[0]))
                 .thenApply(it -> {
                     var _map = new HashMap<String, Backup>();
-                    map.forEach((k, v) -> _map.put(k, v.join()));
+                    map.forEach((k, v) -> {
+                        var result = v.join();
+                        LOGGER.info("Backup information of {}: {}", k, result);
+                        _map.put(k, result);
+                    });
                     return _map;
                 });
     }
@@ -154,15 +168,18 @@ public class JustBackupMod implements ModInitializer {
     public CompletableFuture<Backup> issueBackup(String subjectName, boolean incremental) {
         var subject = backupSubjects.get(subjectName);
         if (subject == null)
-            return CompletableFuture.failedFuture(new IllegalArgumentException("Unknown backup subject: " + subjectName));
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Unknown backup _subject: " + subjectName));
         if (!incremental) {
             try (var s = Files.walk(subject.root())) {
-                subject = new BackupSubject(subject.name(), subject.root(), s.filter(Files::isRegularFile).toList());
+                subject = new BackupSubject(subject.name(), subject.root(), s.filter(Files::isRegularFile)
+                        .filter(it -> !it.getFileName().toString().equals("session.lock"))
+                        .toList());
             } catch (IOException e) {
                 return CompletableFuture.failedFuture(new IllegalArgumentException("Cannot perform full backup for " + subjectName, e));
             }
         }
         var finalSubject = subject;
+        if (config.allowGunzip()) LOGGER.info("Chunk reassembler is enabled!");
         var worker = new BackupWorker(server, tracker, Path.of(config.temporaryBackupDir()),
                 subject, c ->
                 c.allowGunzip(config.allowGunzip())

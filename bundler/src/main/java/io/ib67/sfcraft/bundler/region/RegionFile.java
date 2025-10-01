@@ -89,11 +89,14 @@ public class RegionFile implements Closeable {
     }
 
     public ByteBuf writeOutput() {
-        var sect = allocator.buffer(8192);
+        var sect = allocator.buffer(4096);
+        sect.setZero(0, 4096);
+        sect.writerIndex(4096);
         var compositeByteBuf = allocator.compositeBuffer(2 + regionData.size());
         var beginSector = 2;
         compositeByteBuf.addComponent(true, sect);
         timestamp.retain();
+        timestamp.readerIndex(0);
         compositeByteBuf.addComponent(true, timestamp);
         for (var entry : regionData.short2ObjectEntrySet()) {
             var chunkKey = entry.getShortKey();
@@ -102,12 +105,21 @@ public class RegionFile implements Closeable {
             var chunk = entry.getValue();
             var size = chunk.readableBytes();
             var sizeSectors = Math.ceilDiv(size, 4096);
+            var zeros = 4096 - (size % 4096);
+            for (int i = 0; i < zeros; i++) {
+                chunk.writeByte(0);
+            }
             if (sizeSectors > 255) {
                 throw new IllegalArgumentException("MCC not supported.");
             }
-            var indexEntry = Integer.reverseBytes(beginSector) << 1 | (sizeSectors & 0xFF);
-            // sect = int[1024]
-            sect.setInt((x + 32 * z) * 4, indexEntry);
+            if(sizeSectors < 0) {
+                throw new IllegalArgumentException("Invalid sizeSectors: "+sizeSectors);
+            }
+            var begin = (x + 32 * z) * 4;
+            sect.setByte(begin, (beginSector >>> 16) & 0xFF);
+            sect.setByte(begin+1, (beginSector >>> 8) & 0xFF);
+            sect.setByte(begin+2, beginSector & 0xFF);
+            sect.setByte(begin+3, sizeSectors & 0xFF);
             chunk.retain(); // retain a local reference
             compositeByteBuf.addComponent(true, chunk);
             beginSector += sizeSectors;

@@ -7,6 +7,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import io.ib67.sfcraft.bundler.BundleReader;
 import lombok.extern.log4j.Log4j2;
 import net.minecraft.command.CommandRegistryAccess;
 import net.minecraft.server.command.CommandManager;
@@ -15,7 +16,10 @@ import net.minecraft.text.ClickEvent;
 import net.minecraft.text.Text;
 
 import java.awt.*;
+import java.io.IOException;
 import java.lang.ref.WeakReference;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -33,10 +37,10 @@ public class BackupCommands {
             "    -- Show this message",
             " /backup list ",
             "    -- List backups",
-            " /backup restore <backupName>",
+            " /backup restore <backupKey>",
             "    -- Restore the backup on next server restart.",
             "    Can be cancelled by /backup cancelrestore",
-            " /backup delete <backupName>",
+            " /backup delete <backupKey>",
             "    -- Delete a backup. This does not ask for a confirmation.",
             " /backup create <incremental: true/false> <subject / \"@all\">",
             "    -- Create a backup.",
@@ -61,11 +65,11 @@ public class BackupCommands {
                 .then(literal("list").executes(this::cmdList))
                 .then(literal("cancelrestore").executes(this::cmdCancelRestore))
                 .then(literal("delete")
-                        .then(argument("backupName", StringArgumentType.greedyString())
+                        .then(argument("backupKey", StringArgumentType.greedyString())
                                 .suggests(this::suggestBackups)
                                 .executes(this::cmdDelete)))
                 .then(literal("restore")
-                        .then(argument("backupName", StringArgumentType.greedyString())
+                        .then(argument("backupKey", StringArgumentType.greedyString())
                                 .suggests(this::suggestBackups)
                                 .executes(this::cmdRestore)))
                 .then(literal("create")
@@ -128,19 +132,49 @@ public class BackupCommands {
             s.sendMessage(Text.of("TIP: Use `/backup cancelrestore` to cancel that request."));
             return 0;
         }
-        var backupName = StringArgumentType.getString(context, "backupName");
+        var backupKey = StringArgumentType.getString(context, "backupKey");
+        var backup = mod.tracker.getTrackedBackups().get(backupKey);
+        if (backup == null) {
+            s.sendMessage(Text.of("Invalid backup " + backupKey + ". Note: Use backupKey instead of backupName!"));
+            return 0;
+        }
         restoreIssued = () -> {
-            //todo implementation
+            log.warn("EXTRACTING BACKUP " + backup + " TO " + backup.from());
+            log.warn(" == STEP 1 == Make a backup for the destination.");
+            var destination = Path.of(backup.from());
+            var movedDst = destination.resolveSibling(destination.getFileName().toString()+"_bak_"+System.currentTimeMillis());
+            try{
+                Files.move(destination, movedDst);
+                log.info("{} has been moved to {}", destination, movedDst);
+            } catch (IOException e) {
+                log.error(e);
+                log.error("CANNOT MOVE "+destination+" TO "+movedDst);
+                log.error("BACKUP INTERRUPTED. Here are some tips helping you out:");
+                log.error(" -- A. Merge already moved files");
+                log.error("  Try this command in your server directory: (linux)");
+                log.error("  $ cp ./"+movedDst+"/* ./"+destination);
+                log.error(" -- B. Remove them all and use external unbundler tools");
+                log.error("  You may want to copy them elsewhere first (see kind A)");
+                log.error("  $ rm -r ./"+destination+" ./"+movedDst);
+                log.error("  Visit https://github.com/saltedfishclub/justbackup for the usage of bundler tools");
+                log.error(" ------- ERROR END -------");
+                return;
+            }
+            log.info(" == STEP 2 == Recovering backup "+backup);
+            mod.tracker.recoverBackup(backup, destination);
+            log.info("Backup has been recovered.");
         };
+        s.sendMessage(Text.of("Backup restoration task has been scheduled!"));
+        s.sendMessage(Text.of("Restart your server to take changes."));
         return Command.SINGLE_SUCCESS;
     }
 
     private int cmdDelete(CommandContext<ServerCommandSource> context) {
-        var backupName = StringArgumentType.getString(context, "backupName");
-        var backup = mod.tracker.getTrackedBackups().get(backupName);
+        var backupKey = StringArgumentType.getString(context, "backupKey");
+        var backup = mod.tracker.getTrackedBackups().get(backupKey);
         var source = context.getSource();
         if (backup == null) {
-            source.sendMessage(Text.of("Invalid backup. No backups are named '" + backupName + "'"));
+            source.sendMessage(Text.of("Invalid backup. No backups are named '" + backupKey + "'"));
             return 0;
         }
         try {
@@ -194,6 +228,8 @@ public class BackupCommands {
         for (String s : helpMessage) {
             if (s.startsWith(" /")) {
                 source.sendMessage(Text.literal(s).withColor(Color.CYAN.getRGB()));
+            } else {
+                source.sendMessage(Text.of(s));
             }
         }
         return Command.SINGLE_SUCCESS;
