@@ -33,7 +33,6 @@ public class BundleReader {
     }
 
     public void extract(Path bundle, Path destination) throws IOException {
-        var symbolsToLink = new HashMap<String, String>();
         var readMaps = new HashMap<String, Long>();
         try (var zstd = new ZstdInputStreamNoFinalizer(Files.newInputStream(bundle, StandardOpenOption.READ));
              var in = new EntryInputStream(zstd)) {

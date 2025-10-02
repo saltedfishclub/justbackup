@@ -44,7 +44,6 @@ public record BackupWorker(
             // tmp file path
             log.info("Creating bundle {}", tmpBundle);
             BundleWriter.createBundle(tmpBundle, subject.changedFiles(), config);
-            return strategy.createBackup(subject.name(), subject.root(), tmpBundle);
         } catch (Exception e) {
             throw e;
         } finally {
@@ -55,7 +54,9 @@ public record BackupWorker(
                 log.error("Expect BACKUP state but got {}", BACKUP_LOCK.get());
                 Thread.sleep(2000);
             }
-            Files.deleteIfExists(tmpBundle);
         }
+        var result = strategy.createBackup(subject.name(), subject.root(), tmpBundle);
+        Files.deleteIfExists(tmpBundle);
+        return result;
     }
 }

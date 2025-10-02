@@ -119,7 +119,7 @@ public class RegionParser implements Closeable {
             case 2 -> new DeflaterInputStream(new ByteBufInputStream(in));
             case 3 -> new ByteBufInputStream(in);
             case 4 -> new LZ4BlockInputStream(new ByteBufInputStream(in));
-            // user defined compression algorithm, no going to support.
+            // user defined compression algorithm, not going to support.
             // (or mcc)
             default -> throw new IOException("Unsupported compression type. " + compressionType);
         };
