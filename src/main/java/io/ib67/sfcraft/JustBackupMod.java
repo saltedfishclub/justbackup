@@ -11,7 +11,6 @@ import io.ib67.sfcraft.strategy.S3BackupStrategy;
 import io.netty.buffer.ByteBufAllocator;
 import lombok.SneakyThrows;
 import net.fabricmc.api.ModInitializer;
-
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.network.chat.Component;
@@ -22,7 +21,8 @@ import org.slf4j.LoggerFactory;
 
 import java.awt.*;
 import java.io.IOException;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -44,10 +44,23 @@ public class JustBackupMod implements ModInitializer {
     protected JustBackupConfig config;
     protected BackupTracker tracker;
     protected Path backupIndexPath;
+    protected FileWatcherThread watcherThread;
 
     @Override
-    @SneakyThrows
     public void onInitialize() {
+        try {
+            doInitialize();
+        } catch (Exception e) {
+            LOGGER.error("Error while initializing the mod", e);
+            LOGGER.error("This mod will not work w/o correct configuration.");
+            if (watcherThread != null) {
+                if (watcherThread.getState() != Thread.State.NEW) watcherThread.interrupt();
+            }
+        }
+    }
+
+    @SneakyThrows
+    private void doInitialize() {
         LOGGER.info("Loading backup configuration");
         Path config1 = Path.of("config");
         backupIndexPath = config1.resolve("just_backup_index.json");
@@ -81,14 +94,14 @@ public class JustBackupMod implements ModInitializer {
     }
 
     private void registerWatchService() {
-        var watcherThread = new FileWatcherThread(
+        watcherThread = new FileWatcherThread(
                 config.backupSubjects().entrySet().stream()
                         .map(it -> Map.entry(it.getKey(), Path.of(it.getValue())))
                         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
                 this::handleFileChanges
         );
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
-            watcherThread.interrupt();
+            if (watcherThread.getState() != Thread.State.TERMINATED) watcherThread.interrupt();
         });
         watcherThread.start();
     }
