@@ -100,9 +100,9 @@ public class JustBackupMod implements ModInitializer {
                         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)),
                 this::handleFileChanges
         );
-        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (watcherThread.getState() != Thread.State.TERMINATED) watcherThread.interrupt();
-        });
+        }));
         watcherThread.start();
     }
 
