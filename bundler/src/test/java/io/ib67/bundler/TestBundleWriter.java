@@ -1,11 +1,8 @@
 package io.ib67.bundler;
 
 import io.ib67.sfcraft.bundler.BundleWriter;
-import io.netty.buffer.ByteBufAllocator;
 import org.junit.jupiter.api.Test;
 
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;

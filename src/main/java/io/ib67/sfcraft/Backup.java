@@ -1,6 +1,6 @@
 package io.ib67.sfcraft;
 
-import net.minecraft.text.Text;
+import net.minecraft.network.chat.Component;
 
 public record Backup(
         String name,
@@ -10,8 +10,8 @@ public record Backup(
         boolean incremental,
         long sizeTotal
 ) {
-    public Text toText(){
-        return Text.of("sizeTotal: "+Math.round(((sizeTotal / 1024.0) / 1024.0) * 100) * 0.01 + "MiB, "+
+    public Component toText(){
+        return Component.nullToEmpty("sizeTotal: "+Math.round(((sizeTotal / 1024.0) / 1024.0) * 100) * 0.01 + "MiB, "+
                 (incremental ? "incremental" :"") + ", type: "+type+"."
         );
     }

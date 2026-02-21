@@ -7,14 +7,12 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
-import io.ib67.sfcraft.bundler.BundleReader;
 import lombok.extern.log4j.Log4j2;
-import net.minecraft.command.CommandRegistryAccess;
-import net.minecraft.server.command.CommandManager;
-import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.text.ClickEvent;
-import net.minecraft.text.Text;
-
+import net.minecraft.commands.CommandBuildContext;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.Component;
 import java.awt.*;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
@@ -24,8 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
-import static net.minecraft.server.command.CommandManager.argument;
-import static net.minecraft.server.command.CommandManager.literal;
+import static net.minecraft.commands.Commands.argument;
+import static net.minecraft.commands.Commands.literal;
 
 @Log4j2
 public class BackupCommands {
@@ -57,10 +55,10 @@ public class BackupCommands {
     }
 
     public void registerCommand(
-            CommandDispatcher<ServerCommandSource> dispatcher,
-            CommandRegistryAccess registry, CommandManager.RegistrationEnvironment env) {
+            CommandDispatcher<CommandSourceStack> dispatcher,
+            CommandBuildContext registry, Commands.CommandSelection env) {
         dispatcher.register(literal("backup")
-                .requires(it -> it.hasPermissionLevel(3))
+                .requires(it -> it.hasPermission(3))
                 .then(literal("help").executes(this::cmdHelp))
                 .then(literal("list").executes(this::cmdList))
                 .then(literal("cancelrestore").executes(this::cmdCancelRestore))
@@ -81,61 +79,61 @@ public class BackupCommands {
                 ));
     }
 
-    private int createBackupBySubject(CommandContext<ServerCommandSource> context) {
+    private int createBackupBySubject(CommandContext<CommandSourceStack> context) {
         var incremental = BoolArgumentType.getBool(context, "incremental");
         var subject = StringArgumentType.getString(context, "subject");
         var s = context.getSource();
-        s.sendMessage(Text.literal("The issued backup has been scheduled.").withColor(Color.CYAN.getRGB()));
+        s.sendSystemMessage(Component.literal("The issued backup has been scheduled.").withColor(Color.CYAN.getRGB()));
         mod.issueBackup(subject, incremental);
         return Command.SINGLE_SUCCESS;
     }
 
-    private int fullBackup(CommandContext<ServerCommandSource> context) {
+    private int fullBackup(CommandContext<CommandSourceStack> context) {
         var incremental = BoolArgumentType.getBool(context, "incremental");
         var s = context.getSource();
-        s.sendMessage(Text.literal("The issued backup has been scheduled.").withColor(Color.CYAN.getRGB()));
+        s.sendSystemMessage(Component.literal("The issued backup has been scheduled.").withColor(Color.CYAN.getRGB()));
         var weakRef = new WeakReference<>(s);
         mod.backupAll(incremental).thenAccept(result -> {
             var ref = weakRef.get();
             if (ref == null) {
-                ref = mod.server.getCommandSource();
+                ref = mod.server.createCommandSourceStack();
             }
-            ref.sendMessage(Text.literal("-- BACKUP RESULT SUMMARY --"));
+            ref.sendSystemMessage(Component.literal("-- BACKUP RESULT SUMMARY --"));
             for (var entry : result.entrySet()) {
                 var k = entry.getKey();
                 var v = entry.getValue();
-                ref.sendMessage(Text.literal("  - [" + k + "]: ").append(v.toText()));
-                ref.sendMessage(Text.literal("BACKUP KEY: " + v.backupKey()).withColor(Color.GRAY.getRGB()));
-                ref.sendMessage(Text.literal("GENERATED FROM: " + v.from()).withColor(Color.GRAY.getRGB()));
+                ref.sendSystemMessage(Component.literal("  - [" + k + "]: ").append(v.toText()));
+                ref.sendSystemMessage(Component.literal("BACKUP KEY: " + v.backupKey()).withColor(Color.GRAY.getRGB()));
+                ref.sendSystemMessage(Component.literal("GENERATED FROM: " + v.from()).withColor(Color.GRAY.getRGB()));
             }
         });
         return Command.SINGLE_SUCCESS;
     }
 
-    private int cmdSuspend(CommandContext<ServerCommandSource> context) {
+    private int cmdSuspend(CommandContext<CommandSourceStack> context) {
         var s = context.getSource();
         // this is safe as we are the only writer here.
         var suspend = mod.suspend;
         mod.suspend = !suspend;
         if (suspend) {
-            s.sendMessage(Text.of("The automatic backup system is now re-enabled."));
+            s.sendSystemMessage(Component.nullToEmpty("The automatic backup system is now re-enabled."));
         } else {
-            s.sendMessage(Text.of("The automatic backup system is now disabled."));
+            s.sendSystemMessage(Component.nullToEmpty("The automatic backup system is now disabled."));
         }
         return Command.SINGLE_SUCCESS;
     }
 
-    private int cmdRestore(CommandContext<ServerCommandSource> context) {
+    private int cmdRestore(CommandContext<CommandSourceStack> context) {
         var s = context.getSource();
         if (restoreIssued != null) {
-            s.sendMessage(Text.literal("Another restore request is already present.").withColor(Color.RED.getRGB()));
-            s.sendMessage(Text.of("TIP: Use `/backup cancelrestore` to cancel that request."));
+            s.sendSystemMessage(Component.literal("Another restore request is already present.").withColor(Color.RED.getRGB()));
+            s.sendSystemMessage(Component.nullToEmpty("TIP: Use `/backup cancelrestore` to cancel that request."));
             return 0;
         }
         var backupKey = StringArgumentType.getString(context, "backupKey");
         var backup = mod.tracker.getTrackedBackups().get(backupKey);
         if (backup == null) {
-            s.sendMessage(Text.of("Invalid backup " + backupKey + ". Note: Use backupKey instead of backupName!"));
+            s.sendSystemMessage(Component.literal("Invalid backup " + backupKey + ". Note: Use backupKey instead of backupName!"));
             return 0;
         }
         restoreIssued = () -> {
@@ -164,46 +162,46 @@ public class BackupCommands {
             mod.tracker.recoverBackup(backup, destination);
             log.info("Backup has been recovered.");
         };
-        s.sendMessage(Text.of("Backup restoration task has been scheduled!"));
-        s.sendMessage(Text.of("Restart your server to take changes."));
+        s.sendSystemMessage(Component.literal("Backup restoration task has been scheduled!"));
+        s.sendSystemMessage(Component.literal("Restart your server to take changes."));
         return Command.SINGLE_SUCCESS;
     }
 
-    private int cmdDelete(CommandContext<ServerCommandSource> context) {
+    private int cmdDelete(CommandContext<CommandSourceStack> context) {
         var backupKey = StringArgumentType.getString(context, "backupKey");
         var backup = mod.tracker.getTrackedBackups().get(backupKey);
         var source = context.getSource();
         if (backup == null) {
-            source.sendMessage(Text.of("Invalid backup. No backups are named '" + backupKey + "'"));
+            source.sendSystemMessage(Component.nullToEmpty("Invalid backup. No backups are named '" + backupKey + "'"));
             return 0;
         }
         try {
             mod.tracker.deleteBackup(backup);
-            source.sendMessage(Text.of("Backup has been deleted."));
+            source.sendSystemMessage(Component.nullToEmpty("Backup has been deleted."));
         } catch (Exception e) {
-            source.sendMessage(Text.of("Backup has not been deleted successfully. ERROR: " + e));
+            source.sendSystemMessage(Component.nullToEmpty("Backup has not been deleted successfully. ERROR: " + e));
             log.error(e);
         }
         return Command.SINGLE_SUCCESS;
     }
 
-    private int cmdList(CommandContext<ServerCommandSource> context) {
+    private int cmdList(CommandContext<CommandSourceStack> context) {
         var source = context.getSource();
         var trackedBackups = mod.tracker.getTrackedBackups();
         if (trackedBackups.isEmpty()) {
-            source.sendMessage(Text.of("No backups are neither created nor tracked yet."));
+            source.sendSystemMessage(Component.nullToEmpty("No backups are neither created nor tracked yet."));
             return Command.SINGLE_SUCCESS;
         }
-        source.sendMessage(Text.of("ALL TRACKED BACKUPS:"));
+        source.sendSystemMessage(Component.nullToEmpty("ALL TRACKED BACKUPS:"));
         for (var entry : trackedBackups.entrySet()) {
             var backupKey = entry.getKey();
             var backup = entry.getValue();
-            source.sendMessage(Text.literal(" - [" + backup.name() + "] ").append(backup.toText()));
-            source.sendMessage(Text.literal("   ").append(
-                            Text.literal("[DELETE]").withColor(Color.RED.getRGB()).styled(it -> it.withClickEvent(
+            source.sendSystemMessage(Component.literal(" - [" + backup.name() + "] ").append(backup.toText()));
+            source.sendSystemMessage(Component.literal("   ").append(
+                            Component.literal("[DELETE]").withColor(Color.RED.getRGB()).withStyle(it -> it.withClickEvent(
                                     new ClickEvent.SuggestCommand("/backup delete " + backupKey)
-                            ))).append(Text.literal(" ")).append(
-                            Text.literal("[RESTORE]").withColor(Color.CYAN.getRGB()).styled(it -> it.withClickEvent(
+                            ))).append(Component.literal(" ")).append(
+                            Component.literal("[RESTORE]").withColor(Color.CYAN.getRGB()).withStyle(it -> it.withClickEvent(
                                     new ClickEvent.SuggestCommand("/backup restore " + backupKey)
                             ))
                     )
@@ -212,30 +210,30 @@ public class BackupCommands {
         return 0;
     }
 
-    private int cmdCancelRestore(CommandContext<ServerCommandSource> context) {
+    private int cmdCancelRestore(CommandContext<CommandSourceStack> context) {
         var source = context.getSource();
         if (restoreIssued != null) {
             restoreIssued = null;
-            source.sendMessage(Text.of("The backup restoration request has been cancelled."));
+            source.sendSystemMessage(Component.nullToEmpty("The backup restoration request has been cancelled."));
             return 0;
         }
-        source.sendMessage(Text.of("You have no backup restoration request in flight."));
+        source.sendSystemMessage(Component.nullToEmpty("You have no backup restoration request in flight."));
         return 0;
     }
 
-    private int cmdHelp(CommandContext<ServerCommandSource> ctx) {
+    private int cmdHelp(CommandContext<CommandSourceStack> ctx) {
         var source = ctx.getSource();
         for (String s : helpMessage) {
             if (s.startsWith(" /")) {
-                source.sendMessage(Text.literal(s).withColor(Color.CYAN.getRGB()));
+                source.sendSystemMessage(Component.literal(s).withColor(Color.CYAN.getRGB()));
             } else {
-                source.sendMessage(Text.of(s));
+                source.sendSystemMessage(Component.literal(s));
             }
         }
         return Command.SINGLE_SUCCESS;
     }
 
-    private CompletableFuture<Suggestions> suggestBackups(CommandContext<ServerCommandSource> serverCommandSourceCommandContext, SuggestionsBuilder suggestionsBuilder) {
+    private CompletableFuture<Suggestions> suggestBackups(CommandContext<CommandSourceStack> serverCommandSourceCommandContext, SuggestionsBuilder suggestionsBuilder) {
         for (Backup value : mod.tracker.getTrackedBackups().values()) {
             suggestionsBuilder = suggestionsBuilder.suggest(value.backupKey());
         }

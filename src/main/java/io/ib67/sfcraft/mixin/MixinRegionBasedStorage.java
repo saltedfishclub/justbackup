@@ -4,18 +4,18 @@ import io.ib67.sfcraft.Globals;
 import io.ib67.sfcraft.IOState;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import lombok.SneakyThrows;
-import net.minecraft.world.storage.RegionBasedStorage;
-import net.minecraft.world.storage.RegionFile;
+import net.minecraft.world.level.chunk.storage.RegionFile;
+import net.minecraft.world.level.chunk.storage.RegionFileStorage;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
 
-@Mixin(RegionBasedStorage.class)
+@Mixin(RegionFileStorage.class)
 public abstract class MixinRegionBasedStorage {
     @Shadow
     @Final
-    private Long2ObjectLinkedOpenHashMap<RegionFile> cachedRegionFiles;
+    private Long2ObjectLinkedOpenHashMap<RegionFile> regionCache;
 
     /**
      * @author iceBear67
@@ -23,7 +23,7 @@ public abstract class MixinRegionBasedStorage {
      */
     @Overwrite
     @SneakyThrows
-    public void sync() {
+    public void flush() {
         // allowed states:
         // STORAGE_SYNC, AUTO_SAVE, IDLE
         // we try
@@ -48,8 +48,8 @@ public abstract class MixinRegionBasedStorage {
         }
         // program point: IDLE, AUTOSAVE, STORAGESYNC
         try {
-            for (RegionFile value : this.cachedRegionFiles.values()) {
-                value.sync();
+            for (RegionFile value : this.regionCache.values()) {
+                value.flush();
             }
         } finally {
             // we assert that there are no other threads calling sync()

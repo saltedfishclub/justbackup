@@ -14,8 +14,8 @@ import net.fabricmc.api.ModInitializer;
 
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.text.Text;
 import org.jetbrains.annotations.UnknownNullability;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -110,12 +110,12 @@ public class JustBackupMod implements ModInitializer {
                 backupAll(false);
             }
             scheduledBackupExecutor.scheduleAtFixedRate(() -> {
-                        if (lastBackupServerTicks > 0 && lastBackupServerTicks == server.getTicks()) {
+                        if (lastBackupServerTicks > 0 && lastBackupServerTicks == server.getTickCount()) {
                             // the server is idling
                             LOGGER.debug("Server is idling, not backing up.");
                             return;
                         }
-                        lastBackupServerTicks = server.getTicks();
+                        lastBackupServerTicks = server.getTickCount();
                         if (!suspend) backupAll(config.incremental()).thenAccept(it -> {
                             LOGGER.info("Backup success!");
                             it.forEach((k, v) -> LOGGER.info(k + ": " + v));
@@ -145,9 +145,9 @@ public class JustBackupMod implements ModInitializer {
     public CompletableFuture<Map<String, Backup>> backupAll(boolean incremental) {
         if (backupSubjects.isEmpty()) return CompletableFuture.completedFuture(Map.of());
         var map = new HashMap<String, CompletableFuture<Backup>>();
-        server.getPlayerManager().broadcast(
-                Text.literal(" BACKUP >> ").withColor(Color.RED.getRGB()).styled(it -> it.withBold(true))
-                        .append(Text.of("The server is performing a backup, you may experience some lag.")),
+        server.getPlayerList().broadcastSystemMessage(
+                Component.literal(" BACKUP >> ").withColor(Color.RED.getRGB()).withStyle(it -> it.withBold(true))
+                        .append(Component.nullToEmpty("The server is performing a backup, you may experience some lag.")),
                 false
         );
         for (var entry : backupSubjects.entrySet()) {
@@ -195,11 +195,11 @@ public class JustBackupMod implements ModInitializer {
     @SneakyThrows
     private void onBackupComplete(@UnknownNullability Backup backup, @UnknownNullability Throwable throwable) {
         if (throwable != null) {
-            server.getPlayerManager().broadcast(Text.literal("Backup failed. For administrators, please check your server console."), false);
+            server.getPlayerList().broadcastSystemMessage(Component.literal("Backup failed. For administrators, please check your server console."), false);
             LOGGER.error(throwable.getMessage(), throwable);
         } else {
             Files.writeString(backupIndexPath, Globals.GSON.toJson(tracker.getTrackedBackups()));
-            server.getPlayerManager().broadcast(Text.literal("Backup success. " + backup), false);
+            server.getPlayerList().broadcastSystemMessage(Component.literal("Backup success. " + backup), false);
         }
     }
 

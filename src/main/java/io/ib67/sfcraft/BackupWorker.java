@@ -33,7 +33,7 @@ public record BackupWorker(
         if (server == null) {
             throw new IllegalStateException("MinecraftServer is not initialized yet, not doing backup");
         }
-        server.saveAll(true, true, false);
+        server.saveEverything(true, true, false);
         while (!BACKUP_LOCK.compareAndSet(IOState.IDLE, IOState.BACKUP)) {
             log.info("Server is saving world while performing backup! waiting...");
             Thread.sleep(2000);

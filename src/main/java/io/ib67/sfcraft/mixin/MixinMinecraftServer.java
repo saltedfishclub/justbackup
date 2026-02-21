@@ -16,12 +16,12 @@ public abstract class MixinMinecraftServer {
     private int ticksUntilAutosave;
 
     @Shadow
-    protected abstract int getAutosaveInterval();
+    protected abstract int computeNextAutosaveInterval();
 
-    @Inject(method = "runAutosave", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "autoSave", at = @At("HEAD"), cancellable = true)
     private void backup$checkSaving(CallbackInfo ci) {
         // is already backing up
-        this.ticksUntilAutosave = getAutosaveInterval();
+        this.ticksUntilAutosave = computeNextAutosaveInterval();
         IOState witness;
         while ((witness = Globals.BACKUP_LOCK.compareAndExchange(IOState.IDLE, IOState.SAVING_WORLD)) == IOState.STORAGE_SYNC) {
             try {
@@ -34,7 +34,7 @@ public abstract class MixinMinecraftServer {
         if (witness == IOState.BACKUP) ci.cancel();
     }
 
-    @Inject(method = "runAutosave", at = @At("RETURN"))
+    @Inject(method = "autoSave", at = @At("RETURN"))
     private void backup$disableProtect(CallbackInfo ci) {
         Globals.BACKUP_LOCK.setRelease(IOState.IDLE);
     }

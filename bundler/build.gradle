@@ -8,11 +8,10 @@ plugins {
 
 dependencies {
     api 'com.github.luben:zstd-jni:1.5.7-4'
-    testCompileOnly 'io.netty:netty-all:4.2.6.Final'
     api "io.ib67.kiwi:lang:1.2.3-SNAPSHOT"
-    implementation 'io.netty:netty-all:4.2.6.Final'
-    implementation 'it.unimi.dsi:fastutil:8.5.15'
-    implementation 'org.lz4:lz4-java:1.8.0'
+    compileOnly 'io.netty:netty-all:4.2.6.Final'
+    compileOnly 'it.unimi.dsi:fastutil:8.5.15'
+    compileOnly 'org.lz4:lz4-java:1.8.0'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
@@ -21,6 +20,13 @@ configurations {
     testRuntimeOnly {
         extendsFrom compileOnly
     }
+    testCompileOnly {
+        extendsFrom compileOnly
+    }
+}
+
+shadowJar {
+    minimize()
 }
 
 test {
