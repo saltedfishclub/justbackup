@@ -58,7 +58,7 @@ public class BackupCommands {
             CommandDispatcher<CommandSourceStack> dispatcher,
             CommandBuildContext registry, Commands.CommandSelection env) {
         dispatcher.register(literal("backup")
-                .requires(it -> it.hasPermission(4))
+                .requires(Commands.hasPermission(Commands.LEVEL_OWNERS))
                 .then(literal("help").executes(this::cmdHelp))
                 .then(literal("list").executes(this::cmdList))
                 .then(literal("cancelrestore").executes(this::cmdCancelRestore))

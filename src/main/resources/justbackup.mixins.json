@@ -1,7 +1,7 @@
 {
   "required": true,
   "package": "io.ib67.sfcraft.mixin",
-  "compatibilityLevel": "JAVA_21",
+  "compatibilityLevel": "JAVA_25",
   "mixins": [
     "MixinMinecraftServer",
     "MixinRegionBasedStorage"
