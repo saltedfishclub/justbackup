@@ -85,7 +85,18 @@ public class BundleReader {
                             var result = reassembler.writeReassembled(RegionFile.CompressType.ZLIB);
                             try (var fc = FileChannel.open(path, StandardOpenOption.CREATE,
                                     StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                                result.readBytes(fc, 0, result.readableBytes());
+                                // readBytes(FileChannel, ...) does a single channel write and
+                                // may write fewer bytes than requested; loop or the region file
+                                // is silently truncated.
+                                long pos = 0;
+                                int remaining = result.readableBytes();
+                                while (remaining > 0) {
+                                    int written = result.readBytes(fc, pos, remaining);
+                                    if (written <= 0)
+                                        throw new IOException("Short write restoring " + entry.name() + " to " + path);
+                                    pos += written;
+                                    remaining -= written;
+                                }
                             } finally {
                                 result.release();
                             }

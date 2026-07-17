@@ -74,6 +74,26 @@ public class TestBundleReader {
     }
 
     @Test
+    public void testTimestampWithHighBitSurvivesRoundTrip(@TempDir Path tmp) throws IOException {
+        // 1798761600000 has 0xCE at bits 24-31; an int shift on that byte sign-extends and
+        // makes the decoded time negative, which used to make extract() skip the entry as
+        // "too old". ~half of all real-world dates land in such a band.
+        var time = 1798761600000L;
+        assertTrue(((time >> 24) & 0xFF) >= 0x80, "test vector must exercise the sign-extension path");
+        var bundle = tmp.resolve("hibit.swb.zst");
+        var payload = "kept".getBytes();
+        try (var zstd = new ZstdOutputStreamNoFinalizer(Files.newOutputStream(bundle), 3);
+             var out = new EntryOutputStream(zstd)) {
+            out.writeEntryHeader("world.dat", (short) 0, payload.length, time);
+            out.write(payload);
+        }
+        var dest = tmp.resolve("dest");
+        BundleReader.builder().build().extract(bundle, dest);
+        assertEquals("kept", Files.readString(dest.resolve("world.dat")),
+                "entry must not be skipped just because its timestamp byte has the high bit set");
+    }
+
+    @Test
     public void testTruncatedEntryThrowsInsteadOfLooping(@TempDir Path tmp) throws IOException {
         var bundle = tmp.resolve("truncated.swb.zst");
         try (var zstd = new ZstdOutputStreamNoFinalizer(Files.newOutputStream(bundle), 3);
