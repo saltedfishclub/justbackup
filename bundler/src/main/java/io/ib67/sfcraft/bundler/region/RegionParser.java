@@ -10,8 +10,8 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.zip.DeflaterInputStream;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.InflaterInputStream;
 
 public class RegionParser implements Closeable {
     protected final ByteBuf source;
@@ -28,7 +28,9 @@ public class RegionParser implements Closeable {
         try (var fc = FileChannel.open(file, StandardOpenOption.READ)) {
             var toRead = size;
             while (toRead > 0) {
-                toRead -= source.writeBytes(fc, 0L, (int) size);
+                var read = source.writeBytes(fc, (long) (size - toRead), toRead);
+                if (read < 0) throw new EOFException("Region file " + file + " shrank while reading");
+                toRead -= read;
             }
         }
     }
@@ -98,8 +100,9 @@ public class RegionParser implements Closeable {
                 var key = chunks.getLong(i);
                 var chunkXZ = readChunkXZ(key);
                 var entry = readEntry(key);
-                short x = (short) (chunkXZ & 0x3F);
-                short z = (short) ((chunkXZ >>> 6) & 0x3F);
+                // packed as (x << 6) | z in readAllValidChunks
+                short x = (short) ((chunkXZ >>> 6) & 0x3F);
+                short z = (short) (chunkXZ & 0x3F);
                 var compressType = readChunk(entry, compressed);
                 try (var decompressor = getDecompressorByType(compressType, compressed)) {
                     while (uncompressed.writeBytes(decompressor, 4096) != -1) ;
@@ -116,7 +119,7 @@ public class RegionParser implements Closeable {
     private InputStream getDecompressorByType(int compressionType, ByteBuf in) throws IOException {
         return switch (compressionType) {
             case 1 -> new GZIPInputStream(new ByteBufInputStream(in));
-            case 2 -> new DeflaterInputStream(new ByteBufInputStream(in));
+            case 2 -> new InflaterInputStream(new ByteBufInputStream(in));
             case 3 -> new ByteBufInputStream(in);
             case 4 -> new LZ4BlockInputStream(new ByteBufInputStream(in));
             // user defined compression algorithm, not going to support.

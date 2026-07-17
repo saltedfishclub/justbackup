@@ -1,62 +1,38 @@
 package io.ib67.sfcraft.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import io.ib67.sfcraft.Globals;
-import io.ib67.sfcraft.IOState;
-import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
-import lombok.SneakyThrows;
-import net.minecraft.world.level.chunk.storage.RegionFile;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.storage.RegionFileStorage;
-import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Overwrite;
-import org.spongepowered.asm.mixin.Shadow;
 
+/**
+ * Holds the read side of {@link Globals#WORLD_IO_LOCK} around region file writes and flushes.
+ * Multiple IOWorker threads (one per dimension and storage kind) may run concurrently under
+ * the read lock; while the backup worker holds the write lock, all region IO parks here and
+ * resumes untouched afterwards.
+ */
 @Mixin(RegionFileStorage.class)
 public abstract class MixinRegionBasedStorage {
-    @Shadow
-    @Final
-    private Long2ObjectLinkedOpenHashMap<RegionFile> regionCache;
-
-    /**
-     * @author iceBear67
-     * @reason to wrap the saving process with an exception handler.
-     */
-    @Overwrite
-    @SneakyThrows
-    public void flush() {
-        // allowed states:
-        // STORAGE_SYNC, AUTO_SAVE, IDLE
-        // we try
-        var witness = Globals.BACKUP_LOCK.getAndSet(IOState.STORAGE_SYNC);
-        if (witness == IOState.BACKUP) {
-            // yield out and keep blocking.
-            // The backup worker will wait for us setting this back to backup.
-            int i =0;
-            Globals.BACKUP_LOCK.set(IOState.BACKUP);
-            while (Globals.BACKUP_LOCK.getAcquire() == IOState.BACKUP) {
-                if(i==0){
-                    System.out.println("Server is performing backup, ChunkIO will wait for it.");
-                }
-                if(i++ > 3000){
-                    System.err.println("WARNING: BACKUP_LOCK is holding for 10 minutes!");
-                    System.err.println("ChunkIO will not wait for backup anymore, writting to disk...");
-                    System.err.println("You may adjust this behaviour in configuration");
-                    break;
-                }
-                Thread.sleep(2000);
-            }
-        }
-        // program point: IDLE, AUTOSAVE, STORAGESYNC
+    @WrapMethod(method = "write")
+    private void backup$guardWrite(ChunkPos pos, CompoundTag tag, Operation<Void> original) {
+        long stamp = Globals.WORLD_IO_LOCK.readLock();
         try {
-            for (RegionFile value : this.regionCache.values()) {
-                value.flush();
-            }
+            original.call(pos, tag);
         } finally {
-            // we assert that there are no other threads calling sync()
-            // so we can just jump back to the witness value.
-            // witness: AUTO_SAVE or IDLE
-            Globals.BACKUP_LOCK.compareAndExchange(IOState.STORAGE_SYNC, witness);
-            Globals.BACKUP_LOCK.setRelease(witness);
+            Globals.WORLD_IO_LOCK.unlockRead(stamp);
+        }
+    }
+
+    @WrapMethod(method = "flush")
+    private void backup$guardFlush(Operation<Void> original) {
+        long stamp = Globals.WORLD_IO_LOCK.readLock();
+        try {
+            original.call();
+        } finally {
+            Globals.WORLD_IO_LOCK.unlockRead(stamp);
         }
     }
 }

@@ -7,20 +7,18 @@ import lombok.SneakyThrows;
 import lombok.extern.log4j.Log4j2;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 
-import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 @Log4j2
 public class S3BackupStrategy implements BackupStrategy {
-    protected final AtomicBoolean uploading = new AtomicBoolean(false);
     protected final StorageOption.S3 option;
     protected final S3Client s3;
     protected final Path temporaryDownloadPath;
@@ -45,45 +43,42 @@ public class S3BackupStrategy implements BackupStrategy {
 
     @Override
     @SneakyThrows
-    public Backup createBackup(String subject, Path from, Path pathToBundle) {
-        if (!uploading.compareAndSet(false, true)) {
-            throw new IllegalStateException("Last upload is not done yet! keep waiting...");
-        }
-        int i = 0;
-        do {
+    public Backup createBackup(String subject, Path source, Path bundle, boolean incremental, long createdAt) {
+        // bundle names embed the creation timestamp, so keys are unique and retries idempotent
+        var object = option.prefix() + "/" + bundle.getFileName();
+        int attempt = 0;
+        while (true) {
             try {
-                var object = option.prefix() + "/" + pathToBundle.getFileName().toString();
                 s3.putObject(o -> o.bucket(option.bucket())
                         .contentType("application/octet-stream")
-                        .ifNoneMatch("*") // to avoid content overriding
-                        .key(object).build(), pathToBundle);
-                return new Backup(pathToBundle.getFileName().toString(),
+                        .key(object), bundle);
+                return new Backup(bundle.getFileName().toString(),
                         object, "s3",
-                        from.toString(),
-                        false,
-                        Files.size(pathToBundle));
-            } catch (IOException e) {
-                if (i >= option.retryAmount()) {
-                    throw new IllegalStateException("Cannot upload " + pathToBundle + " to S3");
+                        source.toString(),
+                        subject, incremental, createdAt,
+                        Files.size(bundle));
+            } catch (SdkException e) {
+                if (attempt >= option.retryAmount()) {
+                    throw new IllegalStateException("Cannot upload " + bundle + " to S3 after "
+                            + attempt + " retries", e);
                 }
-                var nextTry = Math.pow(2, i++);
-                log.error("Error uploading S3. trying in {}s later. ({}/{})", nextTry, i, option.retryAmount(), e);
-                Thread.sleep((long) (nextTry * 1000));
-            } catch (Exception e) {
-                throw new IllegalStateException("Unrecoverable exception occurred when uploading " + pathToBundle, e);
-            } finally {
-                uploading.set(false);
+                var backoffSeconds = (long) Math.pow(2, attempt++);
+                log.error("Error uploading to S3, retrying in {}s ({}/{})",
+                        backoffSeconds, attempt, option.retryAmount(), e);
+                Thread.sleep(backoffSeconds * 1000);
             }
-        } while (true);
+        }
     }
 
     @Override
     @SneakyThrows
     public void recoverBackup(Backup backup, Path restorePath) {
-        var resp = s3.getObject(b -> b.bucket(option.bucket()).key(backup.backupKey()));
         var target = temporaryDownloadPath.resolve("s3_" + System.currentTimeMillis());
-        try (var fs = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-            resp.transferTo(fs);
+        try {
+            try (var resp = s3.getObject(b -> b.bucket(option.bucket()).key(backup.backupKey()));
+                 var fs = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                resp.transferTo(fs);
+            }
             BundleReader.builder().build().extract(target, restorePath);
         } finally {
             Files.deleteIfExists(target);
@@ -98,10 +93,6 @@ public class S3BackupStrategy implements BackupStrategy {
 
     @Override
     public boolean isAvailable() {
-        if (uploading.get()) {
-            log.warn("Last S3 Backup is still uploading!");
-            return false;
-        }
         return true;
     }
 

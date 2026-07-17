@@ -25,24 +25,23 @@ public class LocalBackupStrategy implements BackupStrategy {
 
     @Override
     @SneakyThrows
-    public Backup createBackup(String subject, Path from, Path pathToBundle) {
+    public Backup createBackup(String subject, Path source, Path bundle, boolean incremental, long createdAt) {
         var parent = backupParentRoot.resolve(subject);
+        var fileName = bundle.getFileName().toString();
         var result = new Backup(
-                pathToBundle.getFileName().toString(),
-                Path.of(subject).resolve(pathToBundle.getFileName()).normalize().toString(),
-                "local", from.toString(), false, Files.size(pathToBundle));
-        if(Files.notExists(parent)) {
+                fileName,
+                Path.of(subject).resolve(fileName).normalize().toString(),
+                "local", source.toString(), subject, incremental, createdAt, Files.size(bundle));
+        if (Files.notExists(parent)) {
             Files.createDirectories(parent);
         }
-        //todo new name
-        Files.move(pathToBundle, parent.resolve(pathToBundle.getFileName()));
+        Files.move(bundle, parent.resolve(fileName));
         return result;
     }
 
     @Override
     @SneakyThrows
     public void recoverBackup(Backup backup, Path restorePath) {
-        // check if it is compressed
         var backupFile = backupParentRoot.resolve(backup.backupKey());
         if (Files.notExists(backupFile)) throw new IllegalArgumentException("Backup " + backupFile + " does not exist");
         BundleReader.builder().build().extract(backupFile, restorePath);
@@ -51,7 +50,7 @@ public class LocalBackupStrategy implements BackupStrategy {
     @SneakyThrows
     @Override
     public void deleteBackup(Backup backup) {
-        Validate.isTrue("local".equals(backup.backupKey()));
+        Validate.isTrue("local".equals(backup.type()), "Not a local backup: %s", backup.backupKey());
         var bundlePath = backupParentRoot.resolve(backup.backupKey());
         Files.deleteIfExists(bundlePath);
     }
@@ -61,14 +60,14 @@ public class LocalBackupStrategy implements BackupStrategy {
     public boolean isAvailable() {
         if (option.diskSizeQuotaBytes() == 0) return true;
         try (var f = Files.walk(backupParentRoot)) {
-            if (f.mapToLong(it->{
+            if (f.filter(Files::isRegularFile).mapToLong(it -> {
                 try {
                     return Files.size(it);
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
             }).sum() >= option.diskSizeQuotaBytes()) {
-                log.warn("Have no space to set another backup! ");
+                log.warn("Backup disk quota ({} bytes) exceeded, refusing to create new backups!", option.diskSizeQuotaBytes());
                 return false;
             }
         }

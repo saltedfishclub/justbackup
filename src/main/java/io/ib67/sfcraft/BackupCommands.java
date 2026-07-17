@@ -7,19 +7,20 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import io.ib67.sfcraft.strategy.BackupChains;
 import lombok.extern.log4j.Log4j2;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+
 import java.awt.*;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static net.minecraft.commands.Commands.argument;
@@ -28,7 +29,7 @@ import static net.minecraft.commands.Commands.literal;
 @Log4j2
 public class BackupCommands {
     protected final JustBackupMod mod;
-    protected Runnable restoreIssued;
+    protected volatile Runnable restoreIssued;
     protected final List<String> helpMessage = List.of(
             "__ Help messages of JustBackup __",
             " /backup help ",
@@ -37,6 +38,8 @@ public class BackupCommands {
             "    -- List backups",
             " /backup restore <backupKey>",
             "    -- Restore the backup on next server restart.",
+            "    Restoring an incremental backup automatically applies its full base",
+            "    and every incremental in between, in order.",
             "    Can be cancelled by /backup cancelrestore",
             " /backup delete <backupKey>",
             "    -- Delete a backup. This does not ask for a confirmation.",
@@ -62,6 +65,7 @@ public class BackupCommands {
                 .then(literal("help").executes(this::cmdHelp))
                 .then(literal("list").executes(this::cmdList))
                 .then(literal("cancelrestore").executes(this::cmdCancelRestore))
+                .then(literal("suspend").executes(this::cmdSuspend))
                 .then(literal("delete")
                         .then(argument("backupKey", StringArgumentType.greedyString())
                                 .suggests(this::suggestBackups)
@@ -74,9 +78,7 @@ public class BackupCommands {
                         .then(argument("incremental", BoolArgumentType.bool())
                                 .then(argument("subject", StringArgumentType.greedyString())
                                         .executes(this::createBackupBySubject))
-                                .then(literal("@all").executes(this::fullBackup)))
-                        .then(literal("suspend").executes(this::cmdSuspend))
-                ));
+                                .then(literal("@all").executes(this::fullBackup)))));
     }
 
     private int createBackupBySubject(CommandContext<CommandSourceStack> context) {
@@ -94,18 +96,23 @@ public class BackupCommands {
         s.sendSystemMessage(Component.literal("The issued backup has been scheduled.").withColor(Color.CYAN.getRGB()));
         var weakRef = new WeakReference<>(s);
         mod.backupAll(incremental).thenAccept(result -> {
-            var ref = weakRef.get();
-            if (ref == null) {
-                ref = mod.server.createCommandSourceStack();
-            }
-            ref.sendSystemMessage(Component.literal("-- BACKUP RESULT SUMMARY --"));
-            for (var entry : result.entrySet()) {
-                var k = entry.getKey();
-                var v = entry.getValue();
-                ref.sendSystemMessage(Component.literal("  - [" + k + "]: ").append(v.toText()));
-                ref.sendSystemMessage(Component.literal("BACKUP KEY: " + v.backupKey()).withColor(Color.GRAY.getRGB()));
-                ref.sendSystemMessage(Component.literal("GENERATED FROM: " + v.from()).withColor(Color.GRAY.getRGB()));
-            }
+            var server = mod.server;
+            if (server == null || !server.isRunning()) return;
+            // completion runs on the backup executor; command sources must be used on the main thread
+            server.submit(() -> {
+                var ref = weakRef.get();
+                if (ref == null) {
+                    ref = server.createCommandSourceStack();
+                }
+                ref.sendSystemMessage(Component.literal("-- BACKUP RESULT SUMMARY --"));
+                for (var entry : result.entrySet()) {
+                    var k = entry.getKey();
+                    var v = entry.getValue();
+                    ref.sendSystemMessage(Component.literal("  - [" + k + "]: ").append(v.toText()));
+                    ref.sendSystemMessage(Component.literal("BACKUP KEY: " + v.backupKey()).withColor(Color.GRAY.getRGB()));
+                    ref.sendSystemMessage(Component.literal("GENERATED FROM: " + v.from()).withColor(Color.GRAY.getRGB()));
+                }
+            });
         });
         return Command.SINGLE_SUCCESS;
     }
@@ -136,31 +143,51 @@ public class BackupCommands {
             s.sendSystemMessage(Component.literal("Invalid backup " + backupKey + ". Note: Use backupKey instead of backupName!"));
             return 0;
         }
+        final List<Backup> chain;
+        try {
+            chain = BackupChains.resolveChain(mod.tracker.getTrackedBackups().values(), backup);
+        } catch (IllegalStateException e) {
+            s.sendSystemMessage(Component.literal(e.getMessage()).withColor(Color.RED.getRGB()));
+            return 0;
+        }
+        s.sendSystemMessage(Component.literal("The following " + chain.size() + " bundle(s) will be applied in order:"));
+        for (var b : chain) {
+            s.sendSystemMessage(Component.literal("  -> [" + (b.incremental() ? "INCR" : "FULL") + "] " + b.backupKey())
+                    .withColor(Color.GRAY.getRGB()));
+        }
         restoreIssued = () -> {
-            log.warn("EXTRACTING BACKUP " + backup + " TO " + backup.from());
-            log.warn(" == STEP 1 == Make a backup for the destination.");
             var destination = Path.of(backup.from());
-            var movedDst = destination.resolveSibling(destination.getFileName().toString()+"_bak_"+System.currentTimeMillis());
-            try{
+            var movedDst = destination.resolveSibling(destination.getFileName().toString() + "_bak_" + System.currentTimeMillis());
+            log.warn("EXTRACTING {} BUNDLE(S) TO {}", chain.size(), destination);
+            log.warn(" == STEP 1 == Make a backup for the destination.");
+            try {
                 Files.move(destination, movedDst);
                 log.info("{} has been moved to {}", destination, movedDst);
             } catch (IOException e) {
-                log.error(e);
-                log.error("CANNOT MOVE "+destination+" TO "+movedDst);
-                log.error("BACKUP INTERRUPTED. Here are some tips helping you out:");
+                log.error("CANNOT MOVE {} TO {}", destination, movedDst, e);
+                log.error("RESTORE INTERRUPTED. Here are some tips helping you out:");
                 log.error(" -- A. Merge already moved files");
                 log.error("  Try this command in your server directory: (linux)");
-                log.error("  $ cp ./"+movedDst+"/* ./"+destination);
+                log.error("  $ cp ./{}/* ./{}", movedDst, destination);
                 log.error(" -- B. Remove them all and use external unbundler tools");
                 log.error("  You may want to copy them elsewhere first (see kind A)");
-                log.error("  $ rm -r ./"+destination+" ./"+movedDst);
+                log.error("  $ rm -r ./{} ./{}", destination, movedDst);
                 log.error("  Visit https://github.com/saltedfishclub/justbackup for the usage of bundler tools");
                 log.error(" ------- ERROR END -------");
                 return;
             }
-            log.info(" == STEP 2 == Recovering backup "+backup);
-            mod.tracker.recoverBackup(backup, destination);
-            log.info("Backup has been recovered.");
+            log.info(" == STEP 2 == Applying {} bundle(s)", chain.size());
+            try {
+                for (int i = 0; i < chain.size(); i++) {
+                    var b = chain.get(i);
+                    log.info("Applying {} ({}/{})", b.backupKey(), i + 1, chain.size());
+                    mod.tracker.recoverBackup(b, destination);
+                }
+                log.info("Backup has been recovered.");
+            } catch (Exception e) {
+                log.error("RESTORE FAILED midway. Your original world is intact at {}", movedDst, e);
+                log.error("Move it back to {} to undo the restore.", destination);
+            }
         };
         s.sendSystemMessage(Component.literal("Backup restoration task has been scheduled!"));
         s.sendSystemMessage(Component.literal("Restart your server to take changes."));
@@ -180,7 +207,7 @@ public class BackupCommands {
             source.sendSystemMessage(Component.nullToEmpty("Backup has been deleted."));
         } catch (Exception e) {
             source.sendSystemMessage(Component.nullToEmpty("Backup has not been deleted successfully. ERROR: " + e));
-            log.error(e);
+            log.error("Cannot delete backup {}", backupKey, e);
         }
         return Command.SINGLE_SUCCESS;
     }

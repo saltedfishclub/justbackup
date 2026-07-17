@@ -12,9 +12,12 @@ import lombok.Builder;
 import lombok.SneakyThrows;
 
 import java.io.*;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.UnaryOperator;
@@ -131,14 +134,40 @@ public class BundleWriter implements Closeable {
             Iterable<Path> path,
             UnaryOperator<BundleWriterBuilder> config
     ) throws IOException {
-        try (var writer = config.apply(BundleWriter.builder())
-                .outputStream(Files.newOutputStream(pathToBundle))
-                .build()) {
-            for (var p : path) {
-                if (!Files.isRegularFile(p) || Files.size(p) == 0) continue;
-                var s = p.toString();
-                writer.write(p, (s.contains("region") && s.endsWith(".mca")) || s.endsWith(".dat"));
+        try (var channel = FileChannel.open(pathToBundle,
+                StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            try (var writer = config.apply(BundleWriter.builder())
+                    .outputStream(new NonClosingOutputStream(Channels.newOutputStream(channel)))
+                    .build()) {
+                for (var p : path) {
+                    if (!Files.isRegularFile(p) || Files.size(p) == 0) continue;
+                    var s = p.toString();
+                    writer.write(p, (s.contains("region") && s.endsWith(".mca")) || s.endsWith(".dat"));
+                }
             }
+            // the zstd epilogue is flushed by writer.close(); fsync before closing so a crash
+            // right after "backup success" cannot leave a hollow bundle behind
+            channel.force(true);
+        }
+    }
+
+    /**
+     * Lets the zstd stream be closed (writing its epilogue) without closing the underlying
+     * channel, so the caller can fsync it afterwards.
+     */
+    private static final class NonClosingOutputStream extends FilterOutputStream {
+        NonClosingOutputStream(OutputStream out) {
+            super(out);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            out.write(b, off, len);
+        }
+
+        @Override
+        public void close() throws IOException {
+            out.flush();
         }
     }
 
@@ -191,8 +220,10 @@ public class BundleWriter implements Closeable {
             result.readBytes(out, length);
             result.release();
             // all done
-        } catch (IOException e) {
-            System.err.println("Failed to parse region " + path + ": " + e);
+        } catch (Exception e) {
+            // any parse failure (not only IOException) must fall back to a plain copy instead
+            // of failing the whole backup
+            System.err.println("Failed to parse region " + path + ", storing it as-is: " + e);
             finalResult.release();
             writePlain(path);
             return;
@@ -205,7 +236,8 @@ public class BundleWriter implements Closeable {
     private void writePlain(Path path) throws IOException {
         var rPath = relativeRoot.toAbsolutePath().relativize(path.toAbsolutePath());
         var outputStream = this.outputStream;
-        outputStream.writeEntryHeader(rPath.toString(), (short) 0, Files.size(path), 0);
+        outputStream.writeEntryHeader(rPath.toString(), (short) 0, Files.size(path),
+                Files.getLastModifiedTime(path).toMillis());
         var read = 0;
         try (var fs = Files.newInputStream(path)) {
             var buffer = BundleWriter.buffer.get();

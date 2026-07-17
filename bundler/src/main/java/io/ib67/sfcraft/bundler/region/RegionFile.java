@@ -45,31 +45,31 @@ public class RegionFile implements Closeable {
         return (short) ((z & 0b111111) << 6 | (x & 0b111111));
     }
 
-    // this retains the input bytebuf.
     public void writeChunk(int chunkX, int chunkZ, CompressType type, ByteBuf data) throws IOException {
-        if (chunkX > 32 || chunkZ > 32 || chunkX < 0 || chunkZ < 0)
+        if (chunkX >= 32 || chunkZ >= 32 || chunkX < 0 || chunkZ < 0)
             throw new IllegalArgumentException("Invalid chunkX+chunkZ: " + chunkX + " " + chunkZ);
         var key = getChunkKey(chunkX, chunkZ);
-        var buf = allocator.buffer(5 + data.readableBytes());
+        ByteBuf payload;
         if (type == CompressType.NONE) {
-            buf.writeInt(data.readableBytes());
-            buf.writeByte(type.index);
-            buf.writeBytes(data);
+            payload = allocator.buffer(data.readableBytes());
+            payload.writeBytes(data);
         } else {
-            try (var out = findCompressor(type, new ByteBufOutputStream(buf))) {
-                while (data.readableBytes() > 0) data.readBytes(out, data.readableBytes());
-                var head = allocator.buffer(5);
-                head.writeInt(buf.readableBytes());
-                head.writeByte(type.index);
-                var composite =  allocator.compositeBuffer();
-                composite.addComponent(true, head);
-                composite.addComponent(true, buf);
+            payload = allocator.buffer();
+            try (var out = findCompressor(type, new ByteBufOutputStream(payload))) {
+                data.readBytes(out, data.readableBytes());
             } catch (IOException e) {
-                buf.release();
+                payload.release();
                 throw e;
             }
         }
-        regionData.put(key, buf);
+        var buf = allocator.buffer(5 + payload.readableBytes());
+        // vanilla region format: the length field also counts the compression type byte
+        buf.writeInt(payload.readableBytes() + 1);
+        buf.writeByte(type.index);
+        buf.writeBytes(payload);
+        payload.release();
+        var previous = regionData.put(key, buf);
+        if (previous != null) previous.release();
     }
 
     private OutputStream findCompressor(CompressType type, OutputStream out) throws IOException {
@@ -82,7 +82,7 @@ public class RegionFile implements Closeable {
     }
 
     public void updateChunkTime(int chunkX, int chunkZ, int timestamp) {
-        if (chunkX > 32 || chunkZ > 32 || chunkX < 0 || chunkZ < 0)
+        if (chunkX >= 32 || chunkZ >= 32 || chunkX < 0 || chunkZ < 0)
             throw new IllegalArgumentException("Invalid chunkX+chunkZ: " + chunkX + " " + chunkZ);
         var index = (chunkX + 32 * chunkZ) * 4;
         this.timestamp.setInt(index, timestamp);
@@ -105,7 +105,7 @@ public class RegionFile implements Closeable {
             var chunk = entry.getValue();
             var size = chunk.readableBytes();
             var sizeSectors = Math.ceilDiv(size, 4096);
-            var zeros = 4096 - (size % 4096);
+            var zeros = (4096 - (size % 4096)) % 4096;
             for (int i = 0; i < zeros; i++) {
                 chunk.writeByte(0);
             }
