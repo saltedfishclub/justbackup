@@ -134,6 +134,20 @@ public class BundleWriter implements Closeable {
             Iterable<Path> path,
             UnaryOperator<BundleWriterBuilder> config
     ) throws IOException {
+        createBundle(pathToBundle, path, List.of(), config);
+    }
+
+    /**
+     * @param deletedRelPaths bundle-relative paths of files deleted since the base backup;
+     *                        written as tombstones so a chained restore mirrors deletions
+     *                        instead of resurrecting files. Empty for full backups.
+     */
+    public static void createBundle(
+            Path pathToBundle,
+            Iterable<Path> path,
+            Iterable<String> deletedRelPaths,
+            UnaryOperator<BundleWriterBuilder> config
+    ) throws IOException {
         try (var channel = FileChannel.open(pathToBundle,
                 StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
             try (var writer = config.apply(BundleWriter.builder())
@@ -143,6 +157,9 @@ public class BundleWriter implements Closeable {
                     if (!Files.isRegularFile(p) || Files.size(p) == 0) continue;
                     var s = p.toString();
                     writer.write(p, (s.contains("region") && s.endsWith(".mca")) || s.endsWith(".dat"));
+                }
+                for (var rel : deletedRelPaths) {
+                    writer.writeTombstone(rel);
                 }
             }
             // the zstd epilogue is flushed by writer.close(); fsync before closing so a crash
@@ -183,6 +200,14 @@ public class BundleWriter implements Closeable {
             return;
         }
         writePlain(path);
+    }
+
+    /**
+     * Records that {@code relPath} was deleted since the base backup. Carries no payload; on
+     * restore the reader removes the file so a chained restore mirrors the deletion.
+     */
+    public void writeTombstone(String relPath) throws IOException {
+        outputStream.writeEntryHeader(relPath, BundleEntry.ATTR_DELETE, 0, System.currentTimeMillis());
     }
 
     private void writeSymbol(Path path) throws IOException {

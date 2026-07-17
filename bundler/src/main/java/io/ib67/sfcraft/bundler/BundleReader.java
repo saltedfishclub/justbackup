@@ -10,6 +10,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.channels.FileChannel;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -21,15 +22,17 @@ public class BundleReader {
     protected final boolean linkSymbol;
     private final byte[] buffer = new byte[4096];
     protected final boolean skipOldEntry;
+    protected final boolean ignoreDeletions;
     protected final ByteBufAllocator allocator;
     protected final byte[] dict;
 
     @Builder
-    public BundleReader(long maxTime, long minTime, boolean linkSymbol, boolean skipOldEntry, ByteBufAllocator allocator, byte[] dict) {
+    public BundleReader(long maxTime, long minTime, boolean linkSymbol, boolean skipOldEntry, boolean ignoreDeletions, ByteBufAllocator allocator, byte[] dict) {
         this.maxTime = maxTime == 0 ? Long.MAX_VALUE : maxTime;
         this.minTime = minTime;
         this.linkSymbol = linkSymbol;
         this.skipOldEntry = skipOldEntry;
+        this.ignoreDeletions = ignoreDeletions;
         this.allocator = allocator == null ? ByteBufAllocator.DEFAULT : allocator;
         this.dict = dict;
     }
@@ -62,6 +65,22 @@ public class BundleReader {
                 readMaps.put(entry.name(), time);
 
                 var path = resolveSafely(destRoot, entry.name());
+                if ((entry.attribute() & BundleEntry.ATTR_DELETE) != 0) {
+                    // tombstone from an incremental: mirror the deletion instead of leaving a
+                    // resurrected file from the base backup. Deleting a path not present in the
+                    // base is a harmless no-op. When ignoreDeletions is set the tombstone is
+                    // skipped, so files deleted after the base are kept on restore.
+                    if (!ignoreDeletions) {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (DirectoryNotEmptyException e) {
+                            // a directory tombstone; its contained files are removed by their own
+                            // tombstones and an empty leftover directory is harmless
+                        }
+                    }
+                    skipExactly(in, entry.length());
+                    continue;
+                }
                 var parentDir = path.getParent();
                 if (Files.notExists(parentDir)) Files.createDirectories(parentDir);
                 if ((entry.attribute() & BundleEntry.ATTR_SYMLINK) != 0) {

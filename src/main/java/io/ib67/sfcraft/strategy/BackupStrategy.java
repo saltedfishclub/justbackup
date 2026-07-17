@@ -17,7 +17,13 @@ public interface BackupStrategy {
      */
     Backup createBackup(String subject, Path source, Path bundle, boolean incremental, long createdAt);
 
-    void recoverBackup(Backup backup, Path restorePath);
+    /**
+     * Extracts {@code backup} into {@code restorePath}.
+     *
+     * @param ignoreDeletions when true, tombstone entries are skipped, so files deleted since
+     *                        the base backup are kept instead of removed on restore
+     */
+    void recoverBackup(Backup backup, Path restorePath, boolean ignoreDeletions);
 
     void deleteBackup(Backup backup);
 

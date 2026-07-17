@@ -42,6 +42,80 @@ public class TestBundleReader {
     }
 
     @Test
+    public void testTombstoneRemovesFileOnRestore(@TempDir Path tmp) throws IOException {
+        var src = Files.createDirectories(tmp.resolve("src"));
+        Files.writeString(src.resolve("keep.txt"), "keep");
+        Files.writeString(src.resolve("gone.txt"), "gone");
+        var full = tmp.resolve("full.swb.zst");
+        BundleWriter.createBundle(full, List.of(src.resolve("keep.txt"), src.resolve("gone.txt")),
+                c -> c.relativeRoot(src));
+
+        // gone.txt was deleted; the incremental carries only a tombstone for it
+        var incr = tmp.resolve("incr.swb.zst");
+        BundleWriter.createBundle(incr, List.of(), List.of("gone.txt"), c -> c.relativeRoot(src));
+
+        var dest = tmp.resolve("dest");
+        var reader = BundleReader.builder().build();
+        reader.extract(full, dest);
+        assertTrue(Files.exists(dest.resolve("gone.txt")), "base restore should lay down the file first");
+
+        reader.extract(incr, dest);
+        assertTrue(Files.exists(dest.resolve("keep.txt")), "unrelated files must survive the tombstone");
+        assertFalse(Files.exists(dest.resolve("gone.txt")),
+                "a tombstoned file must be removed on chained restore, not resurrected");
+    }
+
+    @Test
+    public void testIgnoreDeletionsKeepsTombstonedFile(@TempDir Path tmp) throws IOException {
+        var src = Files.createDirectories(tmp.resolve("src"));
+        Files.writeString(src.resolve("keep.txt"), "keep");
+        Files.writeString(src.resolve("gone.txt"), "gone");
+        var full = tmp.resolve("full.swb.zst");
+        BundleWriter.createBundle(full, List.of(src.resolve("keep.txt"), src.resolve("gone.txt")),
+                c -> c.relativeRoot(src));
+        var incr = tmp.resolve("incr.swb.zst");
+        BundleWriter.createBundle(incr, List.of(), List.of("gone.txt"), c -> c.relativeRoot(src));
+
+        var dest = tmp.resolve("dest");
+        var reader = BundleReader.builder().ignoreDeletions(true).build();
+        reader.extract(full, dest);
+        reader.extract(incr, dest);
+
+        assertTrue(Files.exists(dest.resolve("gone.txt")),
+                "with ignoreDeletions the tombstone is skipped and the file is kept");
+        assertEquals("gone", Files.readString(dest.resolve("gone.txt")));
+        assertEquals("keep", Files.readString(dest.resolve("keep.txt")));
+    }
+
+    @Test
+    public void testTombstoneForUnknownPathIsHarmless(@TempDir Path tmp) throws IOException {
+        var src = Files.createDirectories(tmp.resolve("src"));
+        Files.writeString(src.resolve("a.txt"), "a");
+        var bundle = tmp.resolve("b.swb.zst");
+        // tombstone a nested path that was never in the base backup
+        BundleWriter.createBundle(bundle, List.of(src.resolve("a.txt")),
+                List.of("region/r.0.0.mca"), c -> c.relativeRoot(src));
+
+        var dest = tmp.resolve("dest");
+        BundleReader.builder().build().extract(bundle, dest);
+        assertEquals("a", Files.readString(dest.resolve("a.txt")));
+    }
+
+    @Test
+    public void testTombstoneCannotEscapeDestination(@TempDir Path tmp) throws IOException {
+        var outside = Files.writeString(tmp.resolve("outside.txt"), "precious");
+        var bundle = tmp.resolve("evil.swb.zst");
+        try (var zstd = new ZstdOutputStreamNoFinalizer(Files.newOutputStream(bundle), 3);
+             var out = new EntryOutputStream(zstd)) {
+            out.writeEntryHeader("../outside.txt", io.ib67.sfcraft.bundler.BundleEntry.ATTR_DELETE, 0,
+                    System.currentTimeMillis());
+        }
+        var dest = tmp.resolve("dest");
+        assertThrows(IOException.class, () -> BundleReader.builder().build().extract(bundle, dest));
+        assertTrue(Files.exists(outside), "a tombstone must not delete files outside the destination");
+    }
+
+    @Test
     public void testZipSlipIsRejected(@TempDir Path tmp) throws IOException {
         var bundle = tmp.resolve("evil.swb.zst");
         var payload = "owned".getBytes();

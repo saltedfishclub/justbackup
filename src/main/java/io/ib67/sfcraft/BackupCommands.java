@@ -36,10 +36,11 @@ public class BackupCommands {
             "    -- Show this message",
             " /backup list ",
             "    -- List backups",
-            " /backup restore <backupKey>",
+            " /backup restore [keepdeleted] <backupKey>",
             "    -- Restore the backup on next server restart.",
             "    Restoring an incremental backup automatically applies its full base",
             "    and every incremental in between, in order.",
+            "    keepdeleted: skip deletions, keeping files removed after the base backup.",
             "    Can be cancelled by /backup cancelrestore",
             " /backup delete <backupKey>",
             "    -- Delete a backup. This does not ask for a confirmation.",
@@ -71,9 +72,13 @@ public class BackupCommands {
                                 .suggests(this::suggestBackups)
                                 .executes(this::cmdDelete)))
                 .then(literal("restore")
+                        .then(literal("keepdeleted")
+                                .then(argument("backupKey", StringArgumentType.greedyString())
+                                        .suggests(this::suggestBackups)
+                                        .executes(ctx -> cmdRestore(ctx, true))))
                         .then(argument("backupKey", StringArgumentType.greedyString())
                                 .suggests(this::suggestBackups)
-                                .executes(this::cmdRestore)))
+                                .executes(ctx -> cmdRestore(ctx, false))))
                 .then(literal("create")
                         .then(argument("incremental", BoolArgumentType.bool())
                                 .then(argument("subject", StringArgumentType.greedyString())
@@ -130,7 +135,7 @@ public class BackupCommands {
         return Command.SINGLE_SUCCESS;
     }
 
-    private int cmdRestore(CommandContext<CommandSourceStack> context) {
+    private int cmdRestore(CommandContext<CommandSourceStack> context, boolean ignoreDeletions) {
         var s = context.getSource();
         if (restoreIssued != null) {
             s.sendSystemMessage(Component.literal("Another restore request is already present.").withColor(Color.RED.getRGB()));
@@ -154,6 +159,10 @@ public class BackupCommands {
         for (var b : chain) {
             s.sendSystemMessage(Component.literal("  -> [" + (b.incremental() ? "INCR" : "FULL") + "] " + b.backupKey())
                     .withColor(Color.GRAY.getRGB()));
+        }
+        if (ignoreDeletions) {
+            s.sendSystemMessage(Component.literal("Deletions will be ignored: files removed after the base backup are kept.")
+                    .withColor(Color.YELLOW.getRGB()));
         }
         restoreIssued = () -> {
             var destination = Path.of(backup.from());
@@ -180,8 +189,9 @@ public class BackupCommands {
             try {
                 for (int i = 0; i < chain.size(); i++) {
                     var b = chain.get(i);
-                    log.info("Applying {} ({}/{})", b.backupKey(), i + 1, chain.size());
-                    mod.tracker.recoverBackup(b, destination);
+                    log.info("Applying {} ({}/{}){}", b.backupKey(), i + 1, chain.size(),
+                            ignoreDeletions ? " [ignoring deletions]" : "");
+                    mod.tracker.recoverBackup(b, destination, ignoreDeletions);
                 }
                 log.info("Backup has been recovered.");
             } catch (Exception e) {

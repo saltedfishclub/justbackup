@@ -9,6 +9,7 @@ import net.minecraft.server.MinecraftServer;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -69,7 +70,8 @@ public record BackupWorker(
         }
 
         var tmpBundle = tmpDir.resolve("backup_" + subject.name() + "_" + createdAt + ".swb.zst");
-        Set<Path> drained = null;
+        BackupSubject.Changes changes = null;
+        List<String> tombstones = List.of();
         Path stagingRoot = null;
         try {
             // Barrier: a main-thread save that started before we locked has finished by now.
@@ -80,8 +82,9 @@ public record BackupWorker(
             if (full) {
                 files = collectFullFileList();
             } else {
-                drained = subject.drainChanged();
-                files = drained.stream().filter(this::eligible).toList();
+                changes = subject.drain();
+                files = changes.changed().stream().filter(this::eligible).toList();
+                tombstones = resolveTombstones(changes.deleted());
             }
 
             var packRoot = subject.root();
@@ -99,11 +102,12 @@ public record BackupWorker(
                 log.info("Reflinked {} files to staging; world IO resumed, packing without the lock.", files.size());
             }
 
-            log.info("Creating {} bundle {} ({} files)", full ? "full" : "incremental", tmpBundle, files.size());
+            log.info("Creating {} bundle {} ({} files, {} deletions)",
+                    full ? "full" : "incremental", tmpBundle, files.size(), tombstones.size());
             var finalPackRoot = packRoot;
-            BundleWriter.createBundle(tmpBundle, files, c -> config.apply(c).relativeRoot(finalPackRoot));
+            BundleWriter.createBundle(tmpBundle, files, tombstones, c -> config.apply(c).relativeRoot(finalPackRoot));
         } catch (Exception e) {
-            if (drained != null) subject.mergeBack(drained);
+            if (changes != null) subject.mergeBack(changes);
             Files.deleteIfExists(tmpBundle);
             throw e;
         } finally {
@@ -120,11 +124,30 @@ public record BackupWorker(
         try {
             return strategy.createBackup(subject.name(), subject.root(), tmpBundle, !full, createdAt);
         } catch (Exception e) {
-            if (drained != null) subject.mergeBack(drained);
+            if (changes != null) subject.mergeBack(changes);
             throw e;
         } finally {
             Files.deleteIfExists(tmpBundle);
         }
+    }
+
+    /**
+     * Turns absolute deleted paths into bundle-relative tombstone names. A path that exists
+     * again at snapshot time (deleted then re-created) is dropped — it is bundled as content
+     * instead — as is anything we would not have backed up (session.lock, excluded roots, or
+     * a path outside the subject).
+     */
+    private List<String> resolveTombstones(Set<Path> deleted) {
+        var absRoot = subject.root().toAbsolutePath();
+        var result = new ArrayList<String>();
+        for (Path p : deleted) {
+            var abs = p.toAbsolutePath();
+            if (Files.exists(abs)) continue;
+            if (!abs.startsWith(absRoot)) continue;
+            if (!eligible(abs)) continue;
+            result.add(absRoot.relativize(abs).toString());
+        }
+        return result;
     }
 
     /**

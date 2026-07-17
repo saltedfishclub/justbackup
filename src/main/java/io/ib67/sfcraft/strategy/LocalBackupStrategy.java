@@ -41,10 +41,10 @@ public class LocalBackupStrategy implements BackupStrategy {
 
     @Override
     @SneakyThrows
-    public void recoverBackup(Backup backup, Path restorePath) {
+    public void recoverBackup(Backup backup, Path restorePath, boolean ignoreDeletions) {
         var backupFile = backupParentRoot.resolve(backup.backupKey());
         if (Files.notExists(backupFile)) throw new IllegalArgumentException("Backup " + backupFile + " does not exist");
-        BundleReader.builder().build().extract(backupFile, restorePath);
+        BundleReader.builder().ignoreDeletions(ignoreDeletions).build().extract(backupFile, restorePath);
     }
 
     @SneakyThrows

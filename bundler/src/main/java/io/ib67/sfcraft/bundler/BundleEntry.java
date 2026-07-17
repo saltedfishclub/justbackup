@@ -16,5 +16,7 @@ public record BundleEntry(
 ) {
     public static short ATTR_REASSEMBLE = 1;
     public static short ATTR_SYMLINK = 2;
+    /** Tombstone: the file was deleted since the base backup; the reader removes it on restore. */
+    public static short ATTR_DELETE = 4;
     public static short MAGIC = (short) 0xA2E3;
 }

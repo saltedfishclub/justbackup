@@ -45,8 +45,8 @@ public class BackupTracker implements BackupStrategy {
     }
 
     @Override
-    public void recoverBackup(Backup backup, Path restorePath) {
-        underlying.recoverBackup(backup, restorePath);
+    public void recoverBackup(Backup backup, Path restorePath, boolean ignoreDeletions) {
+        underlying.recoverBackup(backup, restorePath, ignoreDeletions);
     }
 
     @Override

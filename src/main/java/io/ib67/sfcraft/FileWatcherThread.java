@@ -19,6 +19,13 @@ public class FileWatcherThread extends Thread {
         void onChange(String subject, Path file);
 
         /**
+         * A path under this subject was deleted. The path is already gone, so it may have been
+         * a file or a directory; the backup layer reconciles against the live filesystem and
+         * only tombstones paths that are still absent at snapshot time.
+         */
+        void onDelete(String subject, Path file);
+
+        /**
          * Events for this subject were lost (OS queue overflow, or its directory tree was
          * replaced underneath us); the accumulated change set can no longer be trusted and
          * the next backup should be a full one.
@@ -87,7 +94,9 @@ public class FileWatcherThread extends Thread {
                     }
                     var path = dir.resolve((Path) ev.context());
                     log.debug("event {} on {} ({})", kind, path, subject);
-                    if (Files.isRegularFile(path)) {
+                    if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
+                        listener.onDelete(subject, path);
+                    } else if (Files.isRegularFile(path)) {
                         listener.onChange(subject, path);
                     } else if (Files.isDirectory(path) && kind == StandardWatchEventKinds.ENTRY_CREATE) {
                         // report contained files too: they may have been created before we
@@ -168,7 +177,8 @@ public class FileWatcherThread extends Thread {
                     var abs = p.toAbsolutePath();
                     var key = abs.register(watcher,
                             StandardWatchEventKinds.ENTRY_CREATE,
-                            StandardWatchEventKinds.ENTRY_MODIFY);
+                            StandardWatchEventKinds.ENTRY_MODIFY,
+                            StandardWatchEventKinds.ENTRY_DELETE);
                     watchedDirs.put(abs, subject);
                     keyToDir.put(key, abs);
                 } else if (reportFiles && Files.isRegularFile(p)) {

@@ -72,14 +72,14 @@ public class S3BackupStrategy implements BackupStrategy {
 
     @Override
     @SneakyThrows
-    public void recoverBackup(Backup backup, Path restorePath) {
+    public void recoverBackup(Backup backup, Path restorePath, boolean ignoreDeletions) {
         var target = temporaryDownloadPath.resolve("s3_" + System.currentTimeMillis());
         try {
             try (var resp = s3.getObject(b -> b.bucket(option.bucket()).key(backup.backupKey()));
                  var fs = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                 resp.transferTo(fs);
             }
-            BundleReader.builder().build().extract(target, restorePath);
+            BundleReader.builder().ignoreDeletions(ignoreDeletions).build().extract(target, restorePath);
         } finally {
             Files.deleteIfExists(target);
         }

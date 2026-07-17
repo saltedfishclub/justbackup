@@ -130,6 +130,12 @@ public class JustBackupMod implements ModInitializer, FileWatcherThread.Listener
     }
 
     @Override
+    public void onDelete(String subjectName, Path file) {
+        var subject = backupSubjects.get(subjectName);
+        if (subject != null) subject.addDeleted(file);
+    }
+
+    @Override
     public void onOverflow(String subjectName) {
         var subject = backupSubjects.get(subjectName);
         if (subject != null) subject.forceFullNext();
