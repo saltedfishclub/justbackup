@@ -3,15 +3,11 @@ package io.ib67.sfcraft.strategy;
 import io.ib67.sfcraft.Backup;
 import io.ib67.sfcraft.bundler.BundleReader;
 import io.ib67.sfcraft.config.StorageOption;
+import io.ib67.sfcraft.s3.SimpleS3Client;
 import lombok.SneakyThrows;
 import lombok.extern.log4j.Log4j2;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.core.exception.SdkException;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
 
-import java.net.URI;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -20,22 +16,17 @@ import java.util.Objects;
 @Log4j2
 public class S3BackupStrategy implements BackupStrategy {
     protected final StorageOption.S3 option;
-    protected final S3Client s3;
+    protected final SimpleS3Client s3;
     protected final Path temporaryDownloadPath;
 
     @SneakyThrows
     public S3BackupStrategy(StorageOption.S3 option, Path tempDownloadPath) {
         this.option = option;
-        var credential = AwsBasicCredentials.create(option.accessKey(), option.secretKey());
-        this.s3 = S3Client.builder()
-                .region(Region.of(option.region()))
-                .forcePathStyle(option.enforcePathStyle())
-                .endpointOverride(URI.create(option.endpoint()))
-                .credentialsProvider(StaticCredentialsProvider.create(credential))
-                .build();
+        this.s3 = new SimpleS3Client(option.endpoint(), option.region(),
+                option.accessKey(), option.secretKey(), option.enforcePathStyle());
         log.info("Testing S3 credentials");
         // throws exception if the bucket neither inaccessible nor not exist
-        s3.headBucket(b -> b.bucket(option.bucket()));
+        s3.headBucket(option.bucket());
         this.temporaryDownloadPath = Objects.requireNonNull(tempDownloadPath);
         if (Files.notExists(temporaryDownloadPath))
             Files.createDirectories(temporaryDownloadPath);
@@ -49,15 +40,13 @@ public class S3BackupStrategy implements BackupStrategy {
         int attempt = 0;
         while (true) {
             try {
-                s3.putObject(o -> o.bucket(option.bucket())
-                        .contentType("application/octet-stream")
-                        .key(object), bundle);
+                s3.putObject(option.bucket(), object, bundle, "application/octet-stream");
                 return new Backup(bundle.getFileName().toString(),
                         object, "s3",
                         source.toString(),
                         subject, incremental, createdAt,
                         Files.size(bundle));
-            } catch (SdkException e) {
+            } catch (IOException e) {
                 if (attempt >= option.retryAmount()) {
                     throw new IllegalStateException("Cannot upload " + bundle + " to S3 after "
                             + attempt + " retries", e);
@@ -75,7 +64,7 @@ public class S3BackupStrategy implements BackupStrategy {
     public void recoverBackup(Backup backup, Path restorePath, boolean ignoreDeletions) {
         var target = temporaryDownloadPath.resolve("s3_" + System.currentTimeMillis());
         try {
-            try (var resp = s3.getObject(b -> b.bucket(option.bucket()).key(backup.backupKey()));
+            try (var resp = s3.getObject(option.bucket(), backup.backupKey());
                  var fs = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                 resp.transferTo(fs);
             }
@@ -88,7 +77,7 @@ public class S3BackupStrategy implements BackupStrategy {
     @Override
     @SneakyThrows
     public void deleteBackup(Backup backup) {
-        s3.deleteObject(b -> b.bucket(option.bucket()).key(backup.backupKey()).build());
+        s3.deleteObject(option.bucket(), backup.backupKey());
     }
 
     @Override
