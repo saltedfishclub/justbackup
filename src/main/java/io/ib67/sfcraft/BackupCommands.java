@@ -22,6 +22,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import static net.minecraft.commands.Commands.argument;
 import static net.minecraft.commands.Commands.literal;
@@ -90,14 +91,63 @@ public class BackupCommands {
         var incremental = BoolArgumentType.getBool(context, "incremental");
         var subject = StringArgumentType.getString(context, "subject");
         var s = context.getSource();
+        if (!mod.backupSubjects.containsKey(subject)) {
+            s.sendSystemMessage(Component.literal("Unknown backup subject: '" + subject + "'.")
+                    .withColor(Color.RED.getRGB()));
+            var configured = mod.backupSubjects.keySet();
+            if (configured.isEmpty()) {
+                s.sendSystemMessage(Component.literal(
+                        "No backup subjects are configured. Set \"backupSubjects\" (name -> world directory) "
+                                + "in config/just_backup.json and restart the server.").withColor(Color.YELLOW.getRGB()));
+            } else {
+                s.sendSystemMessage(Component.literal("Configured subjects: " + String.join(", ", configured)
+                        + " (or use \"@all\").").withColor(Color.YELLOW.getRGB()));
+            }
+            return 0;
+        }
         s.sendSystemMessage(Component.literal("The issued backup has been scheduled.").withColor(Color.CYAN.getRGB()));
-        mod.issueBackup(subject, incremental);
+        reportOnCompletion(s, mod.issueBackup(subject, incremental));
         return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * Reports the outcome of a single backup back to the command source. Completion runs on the
+     * backup executor, so the message is delivered on the main thread; the source is held weakly
+     * (the player may have left) and falls back to the server console source.
+     */
+    private void reportOnCompletion(CommandSourceStack source, CompletableFuture<Backup> future) {
+        var weakRef = new WeakReference<>(source);
+        future.whenComplete((backup, throwable) -> {
+            var server = mod.server;
+            if (server == null || !server.isRunning()) return;
+            server.submit(() -> {
+                var ref = weakRef.get();
+                if (ref == null) ref = server.createCommandSourceStack();
+                if (throwable != null) {
+                    ref.sendSystemMessage(Component.literal("Backup failed: " + rootMessage(throwable))
+                            .withColor(Color.RED.getRGB()));
+                } else {
+                    ref.sendSystemMessage(Component.literal("Backup finished: ").append(backup.toText()));
+                }
+            });
+        });
+    }
+
+    private static String rootMessage(Throwable t) {
+        while (t instanceof CompletionException && t.getCause() != null) t = t.getCause();
+        var msg = t.getMessage();
+        return msg != null ? msg : t.toString();
     }
 
     private int fullBackup(CommandContext<CommandSourceStack> context) {
         var incremental = BoolArgumentType.getBool(context, "incremental");
         var s = context.getSource();
+        if (mod.backupSubjects.isEmpty()) {
+            s.sendSystemMessage(Component.literal(
+                    "No backup subjects are configured, nothing to back up. Set \"backupSubjects\" in "
+                            + "config/just_backup.json and restart the server.").withColor(Color.RED.getRGB()));
+            return 0;
+        }
         s.sendSystemMessage(Component.literal("The issued backup has been scheduled.").withColor(Color.CYAN.getRGB()));
         var weakRef = new WeakReference<>(s);
         mod.backupAll(incremental).thenAccept(result -> {
